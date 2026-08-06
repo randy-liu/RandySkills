@@ -1,0 +1,10 @@
+{
+  "name": "randy-skills",
+  "version": "1.0.0",
+  "description": "Randy's agent skills",
+  "bin": {
+    "randy-skills": "./bin/install.js"
+  },
+  "author": "Randy",
+  "license": "ISC"
+}
