@@ -37,19 +37,25 @@ function appendSkillToFile(targetFilePath, skillContent, toolName) {
     }
     
     let content = '';
+    const wrappedContent = `\n=========================================\n[Tool/Skill: ${skillName}]\n${skillContent}\n=========================================\n`;
+    
     if (fs.existsSync(targetFilePath)) {
       content = fs.readFileSync(targetFilePath, 'utf8');
-      if (content.includes(skillName)) {
-        console.log(`[${toolName}] 已經包含此 Skill，跳過更新。`);
+      
+      // 使用 Regex 尋找舊的 Skill 區塊並移除
+      const regex = new RegExp(`\\n=========================================\\n\\[Tool/Skill: ${skillName}\\][\\s\\S]*?\\n=========================================\\n`, 'g');
+      
+      if (content.match(regex)) {
+        console.log(`[${toolName}] 🔄 偵測到舊版 Skill，正在進行覆寫更新...`);
+        content = content.replace(regex, '');
+      } else if (content.includes(skillName)) {
+        console.log(`[${toolName}] ⚠️ 發現殘留標記但格式不符，請手動清理舊內容後再安裝。`);
         return;
       }
-      content += '\n\n';
     }
     
-    // 加上分隔線與標籤，幫助各家 LLM 識別這是一組獨立的擴充指令
-    const wrappedContent = `\n=========================================\n[Tool/Skill: ${skillName}]\n${skillContent}\n=========================================\n`;
     fs.writeFileSync(targetFilePath, content + wrappedContent, 'utf8');
-    console.log(`[${toolName}] ✅ 已成功寫入指令到 ${targetFilePath}`);
+    console.log(`[${toolName}] ✅ 已成功寫入最新指令到 ${targetFilePath}`);
   } catch (err) {
     console.error(`[${toolName}] ❌ 寫入失敗:`, err.message);
   }
