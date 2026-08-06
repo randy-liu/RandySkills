@@ -25,6 +25,17 @@ description: 無視官方型錄的行銷修辭，直接從釣竿的物理幾何�
 
 ## Execution Logic
 
+### Step 0: Daiwa 型號自動解碼 (Daiwa Model Auto-Parsing)
+若使用者僅提供 Daiwa 釣竿的完整型號（例如：`HL 832MSB-SV AGS21`），請務必依照以下 Daiwa 官方命名邏輯自動拆解規格：
+- **長度 (Length)**：型號最前方的 2~3 位數字。例如 `83` = 8ft 3in，`610` = 6ft 10in。
+- **繼數 (Pieces)**：緊接在長度後的數字/字母。`1`=One-piece (17年後包含握把繼 Grip Joint)，`2`=Two-piece，`4`=Four-piece，`T`=Telescopic (振出)。
+- **力量 (Power)**：緊接在繼數後的字母 (`UL`/`L`/`ML`/`M`/`MH`/`H`/`XH` 等)。若帶有斜線（如 `M/MH`），則斜線前為 Tip (竿先) 力量，斜線後為 Butt (元端) 力量。
+- **調性 (Taper)**：力量之後的字母。`S`=Slow taper, `R`=Regular taper, `F`=Fast taper, `X`=Extra Fast taper。若帶有斜線（如 `F/R`），代表 Tip 為 F 調，Butt 為 R 調。
+- **種類 (Rod Type)**：調性之後的字母。`B`=Baitcasting (槍柄)，`S`=Spinning (紡車)。
+- **機能技術 (Features)**：位於型號後綴（破折號 `-` 之後）。例如 `SV`=SVF Compile-X，`AGS`=Air Guide System，`SMT`=Super Metal Top，`ST`=Solid Tip。
+- **年份 (Year)**：型號最後方的兩位數字，如 `21` = 2021 年款式。
+在進入後續分析前，必須先在報告開頭印出這段「自動拆解規格」的成果。
+
 ### Step 1: 幾何錐度運算 (Taper Ratio Calculation)
 若使用者有提供 `Tip Dia` 與 `Butt Dia` 數值，請呼叫 `run_command` 工具，執行與此 `SKILL.md` 位於同一個 skill 目錄下的 `scripts/calculate_taper.py` Python 腳本來進行計算。
 
