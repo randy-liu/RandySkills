@@ -2,7 +2,7 @@
 
 Randy 的專屬 AI 助手技能庫 (Agent Skills)。
 目前收錄：
-- **釣竿盲狙解碼矩陣 (Rod Spec Decrypter)**：根據物理幾何與材質，反推釣竿的真實調性與手感。（內建支援輸出 Markdown 分析報告）
+- **釣竿盲狙解碼矩陣 (Rod Spec Decrypter)**：根據物理幾何與材質，反推釣竿的真實調性與手感。（內建支援自動於當前目錄產出 Markdown 分析報告）
 
 ## 🚀 安裝方式
 
