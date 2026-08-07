@@ -13,7 +13,7 @@ Randy 的專屬 AI 助手技能庫 (Agent Skills)。
 ```bash
 npx github:randy-liu/RandySkills
 ```
-*適用於：Claude Code 原生 Skill (`.claude/skills/`)、Claude Code 專案指引 (`CLAUDE.md`)、GitHub Copilot (`.github/copilot-instructions.md`)*
+*適用於：Claude Code 原生 Skill (`.claude/skills/`)、Claude Code 專案指引 (`CLAUDE.md`)、GitHub Copilot (`.github/copilot-instructions.md`)、Cursor (`.cursorrules`)、Windsurf (`.windsurfrules`)*
 
 ### 選項 2：全域安裝 (Global)
 除了專案設定檔外，還會將完整的 Skill 資料夾安裝到系統全域設定中。
@@ -28,6 +28,8 @@ npx github:randy-liu/RandySkills -g
 1. **Antigravity (AGY)** (原生 Skill 目錄)
 2. **Claude Code** (原生 Skill 目錄 + `CLAUDE.md` 專案指引)
 3. **GitHub Copilot** (透過 `.github/copilot-instructions.md` 注入)
+4. **Cursor** (透過 `.cursorrules` 注入)
+5. **Windsurf** (透過 `.windsurfrules` 注入)
 
 ## 💡 使用方式
 

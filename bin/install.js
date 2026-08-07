@@ -109,7 +109,9 @@ if (fs.existsSync(skillMdPath)) {
   // 定義各家主流 AI 在專案下認得的指令檔路徑
   const aiTargets = [
     { name: 'Claude Code (CLAUDE.md 指引)', file: path.join(cwd, 'CLAUDE.md') },
-    { name: 'GitHub Copilot', file: path.join(cwd, '.github', 'copilot-instructions.md') }
+    { name: 'GitHub Copilot', file: path.join(cwd, '.github', 'copilot-instructions.md') },
+    { name: 'Cursor', file: path.join(cwd, '.cursorrules') },
+    { name: 'Windsurf', file: path.join(cwd, '.windsurfrules') }
   ];
 
   console.log('\n開始注入指令到各家 AI 設定檔...');
