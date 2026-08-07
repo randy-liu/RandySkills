@@ -1,0 +1,15 @@
+# ---- install.js 產生的建置產物 ----
+# bin/install.js 使用 process.cwd() 注入指令檔。在 repo 根目錄執行安裝器時，
+# 這些檔案會被寫進 repo 自己身上。它們是輸出、不是原始碼，一律不追蹤。
+.cursorrules
+.windsurfrules
+.github/copilot-instructions.md
+
+# 安裝器在 workspace 模式（未帶 -g）下產生的 skill 副本
+.agents/
+.claude/
+
+# ---- Node ----
+node_modules/
+npm-debug.log*
+package-lock.json
