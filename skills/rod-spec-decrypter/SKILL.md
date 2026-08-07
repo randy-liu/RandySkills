@@ -52,9 +52,21 @@ references/<廠牌>_model_naming.md      例：references/daiwa_model_naming.md
 
 指令範例 (請根據此 SKILL.md 的實際絕對路徑來替換 `<skill_dir>`)：
 ```pwsh
-python <skill_dir>/scripts/calculate_taper.py --tip <Tip_Dia> --butt <Butt_Dia>
+python <skill_dir>/scripts/calculate_taper.py --tip <Tip_Dia> --butt <Butt_Dia> --length <全長_m> --max-lure <負載上限_g>
 ```
+
+**🔴 只要使用者提供了「全長」與「路亞負載上限」，就必須一併帶入 `--length` 與 `--max-lure`。**
+兩點式錐度比有已知的失效情況（元端過度強壯而不參與作動、兩端都極細導致高比值失真），這兩個參數會啟用專門捕捉該情況的進階診斷。省略等同於關閉安全網。
+（僅有先徑/元徑時仍可執行，此時腳本會提示進階診斷未啟用。）
+
 請根據腳本輸出的判定結果，作為「純物理幾何」結構的基礎。
+
+**若腳本輸出任何 🔴 警示（判定可信度提醒／元端過剩／全體纖細）**，代表該竿落在錐度比的已知失效區間：
+- **必須**在報告的 Step 1 段落中原文引述該警示。
+- **必須**以官方調性字母為準，並在「官方調性驗證」段落說明落差成因。
+- **不得**單憑腳本判定下結論。
+
+⚠️ 反之亦然：腳本**不負責**捕捉「材質造成的調性落差」（例如 X45 / 3DX 提升響應速度，使胴調子幾何被官方標為 F）。該類落差屬 Step 2 的職責，不得期待腳本示警。
 
 ### Step 2: 材質張力疊加 (Material Tension Overlay)
 這也是解碼最關鍵的一步。請先依據廠牌，讀取 `references/` 目錄下對應的技術字典（例如 `daiwa_technology.md`）。將找到的技術名詞進行「精準比對」，查閱該技術對物理與手感的真實影響，並將其與 Step 1 的幾何結構進行疊加分析（若字典中查無此技術，請依守則 4 放棄臆測並明確提示更新）：
