@@ -9,6 +9,10 @@
 .agents/
 .claude/
 
+# ---- 本機交接筆記 ----
+# 跨 session 的工作交接用，內容只對當下這台機器有意義，不進版控。
+HANDOFF.md
+
 # ---- Node ----
 node_modules/
 npm-debug.log*
