@@ -9,25 +9,26 @@ Randy 的專屬 AI 助手技能庫 (Agent Skills)。
 你可以透過 `npx` 輕鬆將這些 Skills 安裝到你的專案或是全域環境中，本腳本支援一次性注入到多款主流 AI 助手的設定檔內。
 
 ### 選項 1：安裝到當前專案 (Workspace)
-這會將指令注入到你**當前所在目錄**的 AI 設定檔中。
+這會將完整的 Skill 資料夾安裝到當前專案，並將指令注入到支援的 AI 設定檔中。
 ```bash
 npx github:randy-liu/RandySkills
 ```
-*適用於：Claude Code (`CLAUDE.md`)、GitHub Copilot (`.github/copilot-instructions.md`)*
+*適用於：Claude Code 原生 Skill (`.claude/skills/`)、Cursor / Windsurf (`CLAUDE.md`)、GitHub Copilot (`.github/copilot-instructions.md`)*
 
 ### 選項 2：全域安裝 (Global)
-除了注入當前專案的 AI 設定檔外，還會將完整的 Skill 資料夾安裝到系統全域設定中。
+除了專案設定檔外，還會將完整的 Skill 資料夾安裝到系統全域設定中。
 ```bash
 npx github:randy-liu/RandySkills -g
 ```
-*適用於：Antigravity (AGY) / Gemini Agent 系統 (`~/.gemini/config/skills/`)*
+*適用於：Antigravity (AGY) (`~/.gemini/config/skills/`)、Claude Code 全域 Skill (`~/.claude/skills/`)*
 
 ## 🤖 支援的 AI 工具
 
-安裝腳本會自動配置以下 AI 工具的設定檔：
-1. **Antigravity (AGY)**
-2. **Claude Code** 
-3. **GitHub Copilot**
+安裝腳本會自動配置以下 AI 工具：
+1. **Antigravity (AGY)** (原生 Skill 目錄)
+2. **Claude Code** (原生 Skill 目錄)
+3. **Cursor / Windsurf** (透過 `CLAUDE.md` 注入)
+4. **GitHub Copilot** (透過 `.github/copilot-instructions.md` 注入)
 
 ## 💡 使用方式
 

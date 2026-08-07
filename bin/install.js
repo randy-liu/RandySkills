@@ -80,7 +80,22 @@ try {
   console.error(`[AGY / Gemini] ❌ 安裝失敗:`, error.message);
 }
 
-// 2. 安裝給其他 AI Agent (將指令注入到對應的設定檔)
+// 2. 安裝給 Claude Code 的原生 Skill 目錄 (.claude/skills)
+let claudeTargetDir;
+if (isGlobal) {
+  claudeTargetDir = path.join(os.homedir(), '.claude', 'skills');
+} else {
+  claudeTargetDir = path.join(process.cwd(), '.claude', 'skills');
+}
+
+try {
+  copyRecursiveSync(sourceDir, claudeTargetDir);
+  console.log(`[Claude Code] ✅ 完整 Skill 資料夾已安裝至 ${claudeTargetDir}`);
+} catch (error) {
+  console.error(`[Claude Code] ❌ 安裝失敗:`, error.message);
+}
+
+// 3. 安裝給其他 AI Agent (將指令注入到對應的設定檔)
 if (fs.existsSync(skillMdPath)) {
   const rawSkillContent = fs.readFileSync(skillMdPath, 'utf8');
   const targetSkillDir = path.join(agyTargetDir, skillName);
@@ -93,7 +108,7 @@ if (fs.existsSync(skillMdPath)) {
 
   // 定義各家主流 AI 在專案下認得的指令檔路徑
   const aiTargets = [
-    { name: 'Claude Code', file: path.join(cwd, 'CLAUDE.md') },
+    { name: 'Cursor / Windsurf (CLAUDE.md)', file: path.join(cwd, 'CLAUDE.md') },
     { name: 'GitHub Copilot', file: path.join(cwd, '.github', 'copilot-instructions.md') }
   ];
 
