@@ -1,6 +1,7 @@
 # ---- install.js 產生的建置產物 ----
-# bin/install.js 使用 process.cwd() 注入指令檔。在 repo 根目錄執行安裝器時，
-# 這些檔案會被寫進 repo 自己身上。它們是輸出、不是原始碼，一律不追蹤。
+# bin/install.js 會注入指令檔：-g 且從本機 repo checkout 執行時寫回 repo 根目錄，
+# 其餘情況（npx 執行、workspace 模式）寫到 process.cwd()。
+# 前者會把這些檔案寫進 repo 自己身上。它們是輸出、不是原始碼，一律不追蹤。
 .cursorrules
 .windsurfrules
 .github/copilot-instructions.md
