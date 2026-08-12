@@ -70,11 +70,11 @@ def print_band_caution():
     """
     print("")
     print("⚠️  【判定可信度提醒：本區間存在已知落差】")
-    print("    實測樣本中，落在 7.0〜7.5 區間的釣竿，官方調性字母**皆標示為 R (Regular)**，")
+    print("    實測樣本中，落在 7.0〜7.5 區間的釣竿，原廠標的調性**皆為 R (Regular)**，")
     print("    與本腳本的「中庸錐度」判定不一致。已知案例：")
     print("      ・Ratio 7.17  官方 R")
     print("      ・Ratio 7.23  官方 R")
-    print("    → 若該竿有官方調性字母，請**以官方字母為準**，並在報告中說明此落差。")
+    print("    → 若型號字串裡有原廠標的調性，請**以原廠標示為準**，並在報告中說明此落差。")
     print("    → 樣本僅 2 筆，尚不足以調整 band 邊界，故判定文字維持不變。")
 
 
@@ -111,7 +111,7 @@ def run_diagnostics(tip, butt, length, max_lure):
         print(f"    🔴 **警示：指數 ≥ {BUTT_OVERCAP_FLAG:.0f}，元端相對於設計負載過度強壯。**")
         print("        本竿元端在整個設計負載範圍內極可能**永遠不會被撓曲**。")
         print("        → 錐度比的分母端不參與作動，**Ratio 被灌高，Fast 判定不可信**。")
-        print("        → 實際彎曲行為應由前段的錐度分佈決定，請以官方調性字母為準。")
+        print("        → 實際彎曲行為應由前段的錐度分佈決定，請以原廠標的調性為準。")
         # 校準樣本為 722LRS-21；型號刻意不印出，理由同 print_band_caution()。
         print("        → 已知案例：指數 154.6、Ratio 8.50 判 Fast，官方標 R。")
     else:
@@ -132,7 +132,7 @@ def run_diagnostics(tip, butt, length, max_lure):
         print(f"    🔴 **警示：元徑 < {SLIM_BUTT_FLAG}mm，竿身兩端的絕對尺寸都極小。**")
         print("        高錐度比在此**不代表**「前軟後硬」，而是「前段細到不成比例」。")
         print("        → 中後段同樣缺乏絕對剛度，實際行為是**整支一起彎**，而非彎曲點集中前端。")
-        print("        → EX-Fast / Fast 判定在此屬誤導，請以官方調性字母為準。")
+        print("        → EX-Fast / Fast 判定在此屬誤導，請以原廠標的調性為準。")
         # 校準樣本為 702UL+FS-ST23；型號刻意不印出，理由同 print_band_caution()。
         print("        → 已知案例：元徑 7.4mm、Ratio 10.57 判 EX-Fast，官方標 F。")
     else:
