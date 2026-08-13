@@ -75,17 +75,25 @@ def clean_text_line(text):
     return text.strip()
 
 
-def parse_lure_max_g(lure_str):
-    """取路亞負載上限（g）。取不到一律回傳 None，不給預設值。"""
+def parse_lure_range_g(lure_str):
+    """取路亞負載的下限與上限（g），回傳 (min, max)。取不到的那一端為 None。"""
     if not lure_str:
-        return None
+        return (None, None)
     m = re.search(r'([\d\.]+)\s*[〜～~\-–—]+\s*([\d\.]+)\s*g', lure_str)
     if m:
-        return float(m.group(2))
-    g_matches = re.findall(r'([\d\.]+)\s*g', lure_str)
+        lo, hi = float(m.group(1)), float(m.group(2))
+        return (min(lo, hi), max(lo, hi))
+    g_matches = [float(x) for x in re.findall(r'([\d\.]+)\s*g', lure_str)]
+    if len(g_matches) > 1:
+        return (min(g_matches), max(g_matches))
     if g_matches:
-        return max(float(x) for x in g_matches)
-    return None
+        return (None, g_matches[0])
+    return (None, None)
+
+
+def parse_lure_max_g(lure_str):
+    """取路亞負載上限（g）。取不到一律回傳 None，不給預設值。"""
+    return parse_lure_range_g(lure_str)[1]
 
 
 def parse_taper_ratio(clean_content, tip_dia_mm, butt_dia_mm):
@@ -145,6 +153,27 @@ def parse_butt_excess(clean_content):
             if m:
                 return float(m.group(1))
         break
+    return None
+
+
+def parse_tip_structure(raw_content):
+    """判定竿先是實心還是空心。判不出來回傳 None，不猜。
+
+    🔴 只認 Step 3 的判定句，不做全文關鍵字搜尋。報告裡到處都有「solid tip」
+       這個詞——章節標題就叫 Solid Tip Check，空心竿的段落也會寫「型號後綴
+       沒有 -ST（Solid Tip）」來說明它**不是**實心。全文搜尋的結果是 12 支竿
+       全部被判成實心。
+
+    判定句的格式（兩種都以「本竿為」開頭）：
+        本竿為チューブラー（tubular，空心竿先）。
+        本竿為 ソリッドティップ（solid tip，實心竿先），且是……
+    """
+    for m in re.finditer(r'本竿為\s*([^\n。]{0,40})', raw_content):
+        verdict = m.group(1)
+        if re.search(r'ソリッド|solid\s*tip|實心', verdict, re.IGNORECASE):
+            return "Solid Tip"
+        if re.search(r'チューブラー|tubular|空心', verdict, re.IGNORECASE):
+            return "Tubular"
     return None
 
 
@@ -227,15 +256,7 @@ def parse_report_file(file_path):
 
     butt_excess = parse_butt_excess(clean_content)
 
-    # 竿先結構只認通用詞彙（Output Style §2 規定報告要寫成
-    # 「ソリッドティップ（solid tip）」「チューブラー（tubular）」）。
-    # 🔴 不得改認廠牌技術名稱或型號後綴（原本是 "MEGA TOP" 與 "-ST"）。
-    if re.search(r'ソリッド|solid\s*tip', raw_content, re.IGNORECASE):
-        tip_struct = "Solid Tip"
-    elif re.search(r'チューブラー|tubular', raw_content, re.IGNORECASE):
-        tip_struct = "Tubular"
-    else:
-        tip_struct = None
+    tip_struct = parse_tip_structure(raw_content)
 
     taper_ratio, ratio_source = parse_taper_ratio(clean_content, tip_dia_mm, butt_dia_mm)
 
@@ -371,8 +392,19 @@ FORCE_SCALE_45 = 0.0003
 #    會拿到 12 倍額定的荷重，畫出來是一個沒有意義的圈。
 FIGHT_LOAD_G = 100.0
 
-# 額定負載的取樣倍率：0.2×（輕餌）到 2.0×（超載但仍在合理範圍）。
-LOAD_LADDER_RATIOS = (0.2, 0.5, 1.0, 1.5, 2.0)
+# 額定區間內的取樣段數。取樣以**等比**分佈於「路亞負載下限 → 上限」之間，
+# 例如 5〜21g 得到 5／6.7／8.9／11.8／15.8／21。
+# 🔴 不得改用「上限的固定倍率」（曾經是 0.2×〜2.0×）：那會取樣到額定範圍外
+#    （2× 額定 = 42g），而且輕竿與重竿的取樣密度不一致。
+LOAD_LADDER_STEPS = 6
+
+# 取樣起點＝額定下限 × 此係數，**略低於下限**。
+# 目的是讓圖上看得見「餌比原廠建議還輕」時竿子幾乎不吃力的狀態——
+# 那是額定區間下緣的意義所在，從下限正好起跳就看不到這一段。
+LOAD_LADDER_START_RATIO = 0.8
+
+# 沒有標示下限時的假設起點（上限的 1/4）。🟡 這是假設，不是原廠資料。
+LOAD_LADDER_FALLBACK_MIN_RATIO = 0.25
 
 
 def solve_bending_45deg(length_cm, tip_dia, butt_dia, p_flex0, k_power,
@@ -439,14 +471,18 @@ def get_dynamic_load_list(lure_str):
     負載區間必須跟著竿子走——0.6〜5g 的 UL 竿與 11〜28g 的 H 竿，
     合理的取樣點差了一個數量級，套同一組固定克數毫無意義。
     """
-    # 與 parse_lure_max_g 共用同一套解析，避免兩處規則各自漂移
-    # （原本這裡與 parser 各寫一份，parser 那份還會抓到區間下限）。
-    max_lure = parse_lure_max_g(lure_str)
-    if max_lure is None:
+    min_lure, max_lure = parse_lure_range_g(lure_str)
+    if max_lure is None or max_lure <= 0:
         raise ValueError("無法從 {!r} 解析路亞負載上限；請重跑 extract。".format(lure_str))
+    if min_lure is None or min_lure <= 0 or min_lure >= max_lure:
+        min_lure = max_lure * LOAD_LADDER_FALLBACK_MIN_RATIO
 
-    loads = [round(max_lure * ratio, 1) for ratio in LOAD_LADDER_RATIOS]
-    loads = sorted(set([x for x in loads if x < FIGHT_LOAD_G] + [FIGHT_LOAD_G]))
+    start = min_lure * LOAD_LADDER_START_RATIO
+    ratio = (max_lure / start) ** (1.0 / (LOAD_LADDER_STEPS - 1))
+    loads = [round(start * (ratio ** i), 1) for i in range(LOAD_LADDER_STEPS)]
+    loads[-1] = round(max_lure, 1)  # 最後一段必須剛好落在額定上限
+
+    loads = sorted(set(x for x in loads if x < FIGHT_LOAD_G)) + [FIGHT_LOAD_G]
     return [int(x) if x == int(x) else x for x in loads]
 
 def plot_zenaq_comparison(rod_list, category_name, load_g, output_dir):
@@ -462,12 +498,13 @@ def plot_zenaq_comparison(rod_list, category_name, load_g, output_dir):
     hx, hy = np.linspace(0, 35.0 * math.cos(3*math.pi/4), 10), np.linspace(0, 35.0 * math.sin(3*math.pi/4), 10)
     ax.plot(hx, hy, color="#222222", linewidth=6, zorder=5, solid_capstyle='round')
 
-    min_x, max_y = 0, 0
+    bounds = [0.0, 0.0, 0.0, 0.0]  # min_x, max_x, min_y, max_y
     for idx, rod in enumerate(rod_list):
         model_name, color = rod["model_name"], get_rod_color(idx, len(rod_list))
         X, Y = calculate_bending_curve_45deg(rod, load_g)
         ax.plot(X, Y, label=model_name, color=color, linewidth=2.0, zorder=4)
-        min_x, max_y = min(min_x, np.min(X)), max(max_y, np.max(Y))
+        bounds = [min(bounds[0], float(np.min(X))), max(bounds[1], float(np.max(X))),
+                  min(bounds[2], float(np.min(Y))), max(bounds[3], float(np.max(Y)))]
 
     # Apply dedicated margins: Top 15% for title, Right 25% for info/legend
     plt.subplots_adjust(left=0.05, right=0.75, top=0.85, bottom=0.05)
@@ -481,8 +518,11 @@ def plot_zenaq_comparison(rod_list, category_name, load_g, output_dir):
     props = dict(boxstyle="square,pad=0.5", facecolor="black", edgecolor="black")
     fig.text(0.87, 0.85, f"Load\n{load_g}\ngram", fontsize=16, color="white", fontweight='bold', ha='center', va='top', bbox=props)
 
-    ax.set_xlim(min_x * 1.1, 10)
-    ax.set_ylim(-10, max_y * 1.1)
+    # 🔴 範圍必須涵蓋所有畫出來的幾何。原本只追蹤 min_x 與 max_y，
+    #    重負載下竿子彎過垂直、曲線往下走，就會被裁掉一整段（看起來像算錯）。
+    pad = 0.06 * max(bounds[1] - bounds[0], bounds[3] - bounds[2], 1.0)
+    ax.set_xlim(bounds[0] - pad, max(10.0, bounds[1] + pad))
+    ax.set_ylim(bounds[2] - pad, bounds[3] + pad)
     ax.set_aspect('equal', adjustable='box')
     ax.set_xticks([])
     ax.set_yticks([])
@@ -511,13 +551,14 @@ def plot_zenaq_progressive(rod, load_list, output_dir):
     ax.plot(hx, hy, color="#222222", linewidth=6, zorder=5, solid_capstyle='round')
 
     cmap = plt.get_cmap("rainbow")
-    min_x, max_y = 0, 0
+    bounds = [0.0, 0.0, 0.0, 0.0]  # min_x, max_x, min_y, max_y
     for i, load_g in enumerate(load_list):
         color = cmap(i / max(1, len(load_list)-1))
         X, Y = calculate_bending_curve_45deg(rod, load_g)
         ax.plot(X, Y, label=f"{load_g}g", color=color, linewidth=2.0, zorder=4)
         ax.scatter([X[-1]], [Y[-1]], color=color, s=20, zorder=5)
-        min_x, max_y = min(min_x, np.min(X)), max(max_y, np.max(Y))
+        bounds = [min(bounds[0], float(np.min(X))), max(bounds[1], float(np.max(X))),
+                  min(bounds[2], float(np.min(Y))), max(bounds[3], float(np.max(Y)))]
 
     # Apply dedicated margins: Top 15% for title, Right 25% for info/legend
     plt.subplots_adjust(left=0.05, right=0.75, top=0.85, bottom=0.05)
@@ -537,8 +578,11 @@ def plot_zenaq_progressive(rod, load_list, output_dir):
     lure_str = rod.get("basic_specifications", {}).get("Lure_Rating")
     if lure_str: fig.text(0.87, 0.65, f"Lure: {sanitize_text(lure_str)}", fontsize=12, color="#555555", ha='center', va='center')
 
-    ax.set_xlim(min_x * 1.1, 10)
-    ax.set_ylim(-10, max_y * 1.1)
+    # 🔴 範圍必須涵蓋所有畫出來的幾何。原本只追蹤 min_x 與 max_y，
+    #    重負載下竿子彎過垂直、曲線往下走，就會被裁掉一整段（看起來像算錯）。
+    pad = 0.06 * max(bounds[1] - bounds[0], bounds[3] - bounds[2], 1.0)
+    ax.set_xlim(bounds[0] - pad, max(10.0, bounds[1] + pad))
+    ax.set_ylim(bounds[2] - pad, bounds[3] + pad)
     ax.set_aspect('equal', adjustable='box')
     ax.set_xticks([])
     ax.set_yticks([])
@@ -698,18 +742,15 @@ def plot_engineering_chart(rod_data, output_dir):
     # 🔴 負載必須跟著這支竿的額定走，不得寫死克數。
     #    原本固定 100/250/500/1000g，套在 702UL+FS-ST23（額定 0.6〜5g）上
     #    就是 20×／50×／100×／200× 額定——那不是彎曲曲線，是把竿子折斷的模擬。
-    max_lure = parse_lure_max_g(specs.get("Lure_Rating"))
-    if max_lure is None:
-        raise ValueError("{} 缺少可解析的路亞負載上限，無法決定繪圖負載。".format(model_name))
-    styles = [("#1f77b4", "-", 2.0), ("#2ca02c", "--", 2.2), ("#ff7f0e", "-.", 2.4), ("#d62728", "-", 2.8)]
-    ladder = [round(max_lure * r, 1) for r in (0.5, 1.0, 2.0)]
-    labels = ["0.5x 額定", "額定上限", "2x 額定"]
-    ladder.append(FIGHT_LOAD_G)
-    labels.append("搏魚")
-    loads = [
-        (load, "{} ({:g}g)".format(label, load), color, style, width)
-        for load, label, (color, style, width) in zip(ladder, labels, styles)
-    ]
+    #    與 progressive 圖共用同一組階梯：兩種圖只差在持竿角度，負載定義必須一致。
+    ladder = get_dynamic_load_list(specs.get("Lure_Rating"))
+    cmap = plt.get_cmap("viridis")
+    loads = []
+    for i, load_g in enumerate(ladder):
+        is_fight = load_g == FIGHT_LOAD_G
+        label = "搏魚 ({:g}g)".format(load_g) if is_fight else "{:g}g".format(load_g)
+        color = "#d62728" if is_fight else cmap(0.12 + 0.62 * i / max(1, len(ladder) - 1))
+        loads.append((load_g, label, color, "-" if is_fight else "-", 2.8 if is_fight else 1.8))
 
     fig, ax = plt.subplots(figsize=(11, 7), dpi=300)
     fig.patch.set_facecolor("white")
