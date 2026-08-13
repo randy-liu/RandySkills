@@ -562,6 +562,13 @@ FORCE_SCALE_45 = 0.0003
 #    會拿到 12 倍額定的荷重，畫出來是一個沒有意義的圈。
 FIGHT_LOAD_G = 100.0
 
+# 跨竿對比圖的負載（g）。
+# 🔴 這裡**必須**用絕對克數，不能像單竿圖那樣依額定推演——對比圖的意義
+#    就是「同一個重量掛上去，各支竿分別彎成什麼樣」。每支竿用自己的額定
+#    倍率就等於各畫各的，疊在一張圖上不能比較。
+#    50g ＝ 中量級竿的工作區間上緣、輕竿的明顯超載；100g ＝ 搏魚基準。
+COMPARISON_LOADS_G = (50, 100)
+
 # 額定區間內的取樣段數。取樣以**等比**分佈於「路亞負載下限 → 上限」之間，
 # 例如 5〜21g 得到 5／6.7／8.9／11.8／15.8／21。
 # 🔴 不得改用「上限的固定倍率」（曾經是 0.2×〜2.0×）：那會取樣到額定範圍外
@@ -791,7 +798,7 @@ def do_plot_zenaq(json_file, output_dir):
         if not rods:
             print(f"[WARN] 沒有 {name} 類型的釣竿，略過該對比圖。", file=sys.stderr)
             continue
-        for load_g in (28, 100):
+        for load_g in COMPARISON_LOADS_G:
             plot_zenaq_comparison(rods, name, load_g, output_dir)
 
     for rod in rod_dataset:
