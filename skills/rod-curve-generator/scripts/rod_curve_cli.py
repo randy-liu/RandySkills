@@ -156,6 +156,182 @@ def parse_butt_excess(clean_content):
     return None
 
 
+def parse_tech_table(raw_content):
+    """讀報告 §1-2「搭載技術」表，回傳 {技術名稱: 是否搭載}。
+
+    這是技術欄位【唯一】的證據來源——表格是報告逐竿判定的結果，
+    ✅／❌ 都由該竿的官方 ※ 標註或介紹文推導而來。
+    """
+    section = re.search(r'###\s*1-2[^\n]*\n(.*?)(?=###\s*1-3|##\s*2|\Z)',
+                        raw_content, re.DOTALL)
+    text = section.group(1) if section else raw_content
+
+    table = re.search(r'((?:\|[^\n]+\n?)+)', text)
+    if not table:
+        return {}
+
+    status = {}
+    for line in table.group(1).strip().split("\n"):
+        cols = [clean_markdown_tags(c) for c in line.split("|")[1:-1]]
+        if len(cols) < 2:
+            continue
+        name, state = cols[0].strip(), cols[1].strip()
+        if not name or name == "技術" or name.startswith("---"):
+            continue
+        status[name] = ("✅" in state) and ("非搭載" not in state)
+    return status
+
+
+def parse_materials(raw_content, tip_dia_mm, model_name):
+    """由技術表推導材質與結構欄位。
+
+    🔴 查不到就留 None，不得假設。原始的 extract_rod_data.py 在查不到時
+       會落到 `blank_material = "HVF NANOPLUS"`、`anti_twist = "X45 Full Shield"`，
+       並把 `blank_construction` 寫死成 "TUBULAR POWER SLIM"。Heartland 全系列
+       剛好都有這些技術所以看不出問題，但那是「猜系列的共通值」——換系列或
+       換廠牌就會在圖上宣稱一個沒查證過的技術。
+    """
+    tech = parse_tech_table(raw_content)
+
+    def mounted(*names):
+        return any(tech.get(n) for n in names)
+
+    if mounted("SVF COMPILE-X", "SVF"):
+        blank_material = "SVF COMPILE-X"
+    elif mounted("HVF NANOPLUS", "HVF ナノプラス"):
+        blank_material = "HVF NANOPLUS"
+    else:
+        blank_material = None
+
+    if mounted("X45フルシールド", "X45 フルシールド"):
+        anti_twist = "X45 Full Shield"
+    elif mounted("X45"):
+        anti_twist = "X45"
+    else:
+        anti_twist = None
+
+    if mounted("3DX"):
+        butt_structure = "3DX (Butt Only)" if re.search(r'只(在|施加在)元段', raw_content) else "3DX"
+    elif "3DX" in tech:  # 表裡有這一列但標 ❌ ＝ 已查證為未搭載
+        butt_structure = "None (3DX Excluded)"
+    else:
+        butt_structure = None
+
+    tip_struct = parse_tip_structure(raw_content)
+    if tip_struct == "Solid Tip":
+        label = "MEGATOP " if mounted("MEGA TOP", "メガトップ") else ""
+        tip_struct = "Solid Tip ({}{:.1f}mm)".format(label, tip_dia_mm)
+
+    return {
+        "Blank_Material": blank_material,
+        "Tip_Structure": tip_struct,
+        "Blank_Construction": "TUBULAR POWER SLIM" if mounted("TUBULAR POWER SLIM") else None,
+        "Anti_Twist_Tech": anti_twist,
+        "Butt_Structure": butt_structure,
+        "Joint_Tech": ("V-JOINT + へら合わせ" if mounted("へら合わせ")
+                       else ("V-JOINT" if mounted("V-JOINT") else None)),
+        # 表裡有這一列但標 ❌ ＝ 已查證為未搭載，是結論不是資料缺口，
+        # 所以寫出否定值而不是 None（與 Butt_Structure 的處理一致）。
+        "Reel_Seat_Tech": ("AIR SENSOR SEAT" if mounted("AIR SENSOR SEAT")
+                           else ("Non-Air Sensor Seat" if "AIR SENSOR SEAT" in tech else None)),
+    }
+
+
+def derive_curve_parameters(tip_struct, butt_struct, taper_code, tip_dia_mm, butt_dia_mm,
+                            taper_ratio, butt_excess, max_lure):
+    """由幾何與調性推導繪圖參數。
+
+    🟡 這些門檻是人看著圖調出來的經驗值，不是原廠數據——圖上已標明
+       「繪圖用推估值」。規則搬自 extract_rod_data.py，但拿掉了原本
+       `elif tip_dia_mm == 1.6 and taper_ratio == 6.50:` 那一條：用兩個浮點數
+       精確比對，實際上是在指定某一支特定的竿，只是包裝成規則。
+    """
+    is_solid = "Solid Tip" in (tip_struct or "")
+    is_stiffened = (tip_struct or "") == "Tubular (Stiffened Tip)"
+    excess = butt_excess or 0.0
+
+    if is_solid:
+        flex_point = 22.0 if tip_dia_mm <= 0.8 else (25.0 if tip_dia_mm <= 1.2 else 28.0)
+    elif taper_code == "F":
+        flex_point = 30.0 if tip_dia_mm <= 1.4 else 35.0
+    elif is_stiffened:
+        flex_point = 42.0
+    elif taper_ratio >= 7.0:
+        flex_point = 44.0
+    elif tip_dia_mm >= 2.0:
+        flex_point = 46.0
+    elif taper_ratio <= 6.0:
+        flex_point = 48.0
+    else:
+        flex_point = 45.0
+
+    if max_lure <= 5.0:
+        k_power = 1.1 if is_solid else 1.2
+    elif max_lure <= 7.0:
+        k_power = 1.5
+    elif max_lure <= 10.0:
+        k_power = 1.6
+    elif max_lure <= 11.0:
+        k_power = 1.25
+    elif max_lure <= 14.0:
+        k_power = 1.75
+    elif max_lure <= 18.0:
+        k_power = 2.0
+    elif max_lure <= 21.0:
+        k_power = 2.5
+    elif max_lure >= 28.0:
+        k_power = 3.0
+    else:
+        k_power = 2.0
+
+    has_3dx = "3DX" in (butt_struct or "") and "Excluded" not in (butt_struct or "")
+
+    if is_solid:
+        eta = 0.45 if tip_dia_mm <= 0.8 else 0.25
+    elif excess >= 100.0:
+        eta = 0.25
+    elif is_stiffened:
+        eta = 0.40
+    elif taper_ratio <= 6.0:
+        eta = 0.45
+    elif has_3dx and taper_code == "R":
+        eta = 0.42 if max_lure >= 21.0 else 0.38
+    else:
+        eta = 0.35
+
+    if is_solid:
+        mu_tip = 1.35 if tip_dia_mm <= 0.8 else 1.30
+    elif is_stiffened:
+        mu_tip = 0.90
+    elif max_lure >= 21.0:
+        mu_tip = 0.95
+    else:
+        mu_tip = 1.0
+
+    if butt_dia_mm <= 8.0:
+        mu_butt = 0.95
+    elif excess >= 100.0:
+        mu_butt = 1.40
+    elif (butt_struct or "") == "3DX (Butt Only)" and max_lure >= 28.0:
+        mu_butt = 1.30
+    elif has_3dx:
+        mu_butt = 1.25 if max_lure >= 21.0 else 1.20
+    elif is_stiffened:
+        mu_butt = 1.10
+    elif taper_ratio <= 6.0:
+        mu_butt = 1.05
+    else:
+        mu_butt = 1.15
+
+    return {
+        "initial_flex_point_pct": flex_point,
+        "power_stiffness_factor": k_power,
+        "load_transition_shift_rate": eta,
+        "tip_flexibility_multiplier": mu_tip,
+        "butt_stiffness_multiplier": mu_butt,
+    }
+
+
 def parse_tip_structure(raw_content):
     """判定竿先是實心還是空心。判不出來回傳 None，不猜。
 
@@ -187,7 +363,7 @@ def parse_report_file(file_path):
     missing = []
 
     # --- 全長（必需）：曲線的基礎尺度，缺了整張圖都是假的 ---
-    m_len = re.search(r'\|\s*全長\s*\|\s*([\d\.]+)\s*m', clean_content)
+    m_len = re.search(r'\|\s*全長[^|]*\|\s*([\d\.]+)\s*m', clean_content)
     length_m = float(m_len.group(1)) if m_len else None
     if length_m is None:
         missing.append("全長")
@@ -197,7 +373,7 @@ def parse_report_file(file_path):
     # 繁體報告也可能寫成「先徑」，故字形與分隔符都放寬。
     sep = r'[・･/／]'
     m_dia = re.search(
-        r'\|\s*先[径徑]\s*' + sep + r'\s*元[径徑]\s*\|\s*([\d\.]+)\s*' + sep + r'\s*([\d\.]+)\s*mm',
+        r'\|\s*先[径徑]\s*' + sep + r'\s*元[径徑][^|]*\|\s*([\d\.]+)\s*' + sep + r'\s*([\d\.]+)\s*mm',
         clean_content)
     if m_dia:
         tip_dia_mm, butt_dia_mm = float(m_dia.group(1)), float(m_dia.group(2))
@@ -227,10 +403,13 @@ def parse_report_file(file_path):
     m_line = re.search(r'\|\s*適合ライン[^|]*\|\s*([^|]+)\|', clean_content)
     line_rating = re.sub(r'\s+', ' ', m_line.group(1).strip().replace('（', ' (').replace('）', ')')) if m_line else None
 
-    m_weight = re.search(r'\|\s*標準自重\s*\|\s*([\d\.]+)\s*g', clean_content)
+    # 🔴 欄位名後面可能帶中文註解括號（如「仕舞寸法（收納長度）」），
+    #    所以一律用 [^|]* 收尾——原本要求欄位名後直接接 |，12 支竿的
+    #    仕舞寸法全部抓不到。
+    m_weight = re.search(r'\|\s*標準自重[^|]*\|\s*([\d\.]+)\s*g', clean_content)
     weight_g = float(m_weight.group(1)) if m_weight else None
 
-    m_closed = re.search(r'\|\s*仕舞寸法\s*\|\s*([\d\.]+)\s*cm', clean_content)
+    m_closed = re.search(r'\|\s*仕舞寸法[^|]*\|\s*([\d\.]+)\s*cm', clean_content)
     closed_cm = float(m_closed.group(1)) if m_closed else None
 
     # 種類只從官方六欄的「種類」列取。
@@ -255,18 +434,19 @@ def parse_report_file(file_path):
     geom_action = m_calc_act.group(1).strip() if m_calc_act else None
 
     butt_excess = parse_butt_excess(clean_content)
-
-    tip_struct = parse_tip_structure(raw_content)
-
     taper_ratio, ratio_source = parse_taper_ratio(clean_content, tip_dia_mm, butt_dia_mm)
 
-    taper_letter = official_taper[0] if official_taper else None
-    if tip_struct == "Solid Tip":
-        initial_flex = SOLID_TIP_FLEX_POINT
-    else:
-        initial_flex = FLEX_POINT_BY_TAPER.get(taper_letter, FLEX_POINT_UNKNOWN)
-
-    power_stiffness = 1.2 if max_lure <= 5 else (1.6 if max_lure <= 10 else (2.0 if max_lure <= 18 else 3.0))
+    materials = parse_materials(raw_content, tip_dia_mm, model_name)
+    curve_params = derive_curve_parameters(
+        tip_struct=materials["Tip_Structure"],
+        butt_struct=materials["Butt_Structure"],
+        taper_code=(official_taper[0] if official_taper else None),
+        tip_dia_mm=tip_dia_mm,
+        butt_dia_mm=butt_dia_mm,
+        taper_ratio=taper_ratio,
+        butt_excess=butt_excess,
+        max_lure=max_lure,
+    )
 
     return {
         "model_name": model_name,
@@ -287,22 +467,9 @@ def parse_report_file(file_path):
             "Geometry_Calculated_Action": geom_action,
             "Butt_Excess_Index": butt_excess,
         },
-        # 🔴 材質與技術一律留 None。原本這裡寫死 "HVF NANOPLUS" 與 "X45"，
-        #    每一支竿都被蓋上同一組技術，還會印進 engineering 圖的規格方塊，
-        #    等於每張圖都在宣稱一個沒查證過的事實。報告裡沒有可靠的結構化技術
-        #    欄位可解析，所以誠實留空，圖上顯示「報告未提供」。
-        "material_and_structure_effects": {
-            "Tip_Structure": tip_struct,
-            "Blank_Material": None,
-            "Anti_Twist_Tech": None,
-        },
-        "curve_plotting_parameters": {
-            "initial_flex_point_pct": initial_flex,
-            "power_stiffness_factor": power_stiffness,
-            "load_transition_shift_rate": 0.35,
-            "tip_flexibility_multiplier": 1.0,
-            "butt_stiffness_multiplier": 1.0,
-        },
+        # 材質與技術一律以報告 §1-2 技術表為準；表裡查不到就留 None，不假設。
+        "material_and_structure_effects": materials,
+        "curve_plotting_parameters": curve_params,
     }
 
 
@@ -369,7 +536,10 @@ def show_or_missing(value, suffix=""):
 
 def sanitize_text(text):
     if not isinstance(text, str): return str(text)
-    for old, new in [("〜", " - "), ("~", " - "), ("【", "["), ("】", "]"), ("•", "-"), ("号", "No."), ("號", "No."), ("✅", ""), ("※", "*")]:
+    # 只影響圖上顯示；JSON 一律保留報告原文，原文才是證據。
+    for old, new in [("〜", " - "), ("~", " - "), ("【", "["), ("】", "]"), ("•", "-"),
+                     ("号", "No."), ("號", "No."), ("✅", ""), ("※", "*"),
+                     ("ナイロン", "Nylon "), ("／", " / ")]:
         text = text.replace(old, new)
     return text.strip()
 
