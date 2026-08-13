@@ -46,6 +46,15 @@ Randy 的專屬 AI 助手技能庫 (Agent Skills)。
 
 🔴 **它只回答「這支竿有哪些技術」，不解釋技術的物理影響、也不做手感分析。** 產出寫進 `<廠牌>_<系列>_features.md`，供 `rod-spec-decrypter` 讀取。
 
+### 彎曲曲線產生器 (Rod Curve Generator)
+
+把 `rod-spec-decrypter` 產出的 `<型號>_分析報告.md` 讀回來，用錐度冪次律（$I \propto D^3$）算出受力彎曲曲線並繪圖。**檔名是兩個 skill 之間的契約。**
+
+- **雙模產圖**：`plot-zenaq`（45 度持竿、依路亞負載自動推算測試重量、同重量多竿對比）與 `plot-engineering`（水平 0 度、固定 100/250/500/1000g、附詳細規格方塊）。
+- **不替任何欄位填預設值**：缺**全長／先径・元径／ルアー重量**的報告會被列為失敗並以 exit code 1 結束；其餘欄位缺漏時圖上顯示「報告未提供」，不顯示成看起來像規格的數字。
+- **材質與技術只印報告載明者**，原廠調性四碼 `S`／`R`／`F`／`X` 原樣保留；圖上的 `[Model Parameters]` 已標明是繪圖用推估值。
+- ⚠️ 需要 `uv`（外部相依，不隨本 repo 安裝）。
+
 ## 🎯 目前支援的廠牌
 
 > ### ⚠️ 現階段**僅支援 DAIWA（ダイワ）**。
@@ -68,8 +77,10 @@ Randy 的專屬 AI 助手技能庫 (Agent Skills)。
 ## ⚙️ 前置需求
 
 - **Node.js** — 執行安裝腳本。
-- **Python 3** — Skill 於分析時會呼叫 `scripts/` 底下的兩支腳本：`calculate_taper.py`（錐度）與 `calculate_sensitivity.py`（感度鏈路）。
+- **Python 3** — `rod-spec-decrypter` 分析時會呼叫 `scripts/` 底下的兩支腳本：`calculate_taper.py`（錐度）與 `calculate_sensitivity.py`（感度鏈路）。
   未安裝 Python 不影響安裝，但分析時 AI 將無法取得幾何判定結果。
+- **uv**（選用，僅 `rod-curve-generator` 需要）— 繪圖腳本依賴 `numpy` 與 `matplotlib`，以 PEP 723 內聯宣告、由 `uv` 隔離管理，不汙染全域環境。
+  ⚠️ `uv` 不隨本 repo 安裝；沒有它就只是畫不出曲線圖，其餘功能不受影響。
 
 ## 🚀 安裝方式
 
@@ -130,9 +141,16 @@ skills/
 │   └── scripts/
 │       ├── calculate_taper.py            # 錐度運算與失效診斷
 │       └── calculate_sensitivity.py      # 感度鏈路運算（不輸出分數）
-└── rod-tech-splitter/
-    └── SKILL.md                          # 官方技術清單 → 逐型號搭載明細
+├── rod-tech-splitter/
+│   └── SKILL.md                          # 官方技術清單 → 逐型號搭載明細
+└── rod-curve-generator/
+    ├── SKILL.md                          # 指令封裝與資料誠實守則
+    ├── README.md                          # 雙模產圖的說明（本 skill 專屬）
+    └── scripts/
+        └── rod_curve_cli.py              # 分析報告 → JSON → 彎曲曲線 PNG
 ```
+
+`bin/install.js` 是**掃目錄自動發現** skill 的（認 `SKILL.md` 的存在），新增 skill 不必改安裝腳本。但 SKILL.md 裡呼叫腳本的路徑**必須寫成 `<skill_dir>/scripts/...`**——安裝時會被替換成絕對路徑，寫裸檔名的話注入到 Copilot／Cursor／Windsurf 後會找不到腳本。
 
 **三份參考檔的分工是刻意切開的**，混用會造成 context 污染：
 

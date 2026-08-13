@@ -18,3 +18,8 @@ HANDOFF.md
 node_modules/
 npm-debug.log*
 package-lock.json
+
+# ---- Python ----
+# skills/*/scripts/ 底下的腳本被執行或 import 時產生的位元碼快取。
+__pycache__/
+*.py[cod]
