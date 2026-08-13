@@ -358,43 +358,95 @@ def get_rod_color(idx, total):
 # ==========================================
 # ZENAQ STYLE PHYSICS & PLOTS
 # ==========================================
-def calculate_bending_curve_45deg(rod_data, load_g, num_points=300):
-    specs = rod_data["basic_specifications"]
-    params = rod_data["curve_plotting_parameters"]
-    length_cm = parse_length_cm(specs.get("Length"))
-    tip_dia, butt_dia = require_spec(specs, "Tip_Diameter_mm"), require_spec(specs, "Butt_Diameter_mm")
-    p_flex0 = require_spec(params, "initial_flex_point_pct") / 100.0
-    k_power = require_spec(params, "power_stiffness_factor")
-    
+START_ANGLE_45 = 3.0 * math.pi / 4.0  # 135 度：竿子上舉 45 度、指向左上
+
+# 力量係數。🟡 這是經驗校準值，不是從材料力學推導出來的：原始腳本的註解寫
+# 「0.0003 ensures 21g bends a M power rod by ~20 degrees」。因此**曲線之間的
+# 相對關係可信，絕對撓曲量不可信**——不得拿圖上的公分數去對照實測。
+FORCE_SCALE_45 = 0.0003
+
+# 搏魚負載（g）。這不是路亞重量，是「真的中魚時竿子被拉成什麼樣」的模擬點。
+# 🔴 固定值，不得依竿子強弱分級。原本寫成 >15g 跳 250、>40g 跳 500，
+#    結果是同一張圖上不同竿的極端值不一樣，彼此無法比較，而且中量級竿
+#    會拿到 12 倍額定的荷重，畫出來是一個沒有意義的圈。
+FIGHT_LOAD_G = 100.0
+
+# 額定負載的取樣倍率：0.2×（輕餌）到 2.0×（超載但仍在合理範圍）。
+LOAD_LADDER_RATIOS = (0.2, 0.5, 1.0, 1.5, 2.0)
+
+
+def solve_bending_45deg(length_cm, tip_dia, butt_dia, p_flex0, k_power,
+                        mu_tip, mu_butt, is_solid_tip, load_g,
+                        num_points=300, load_steps=40, sweeps=15):
+    """45 度持竿的大撓度解算。
+
+    🔴 負載必須分步施加。原本一次把整個負載加上去、從打直的初始形狀迭代 60 次，
+       負載大時第一輪的力矩臂是最大值，theta 會一次衝過頭，cos/sin 翻符號之後
+       整個系統失控——實測 702UL+FS-ST23（0.7mm 實心竿先）在 100g 會轉 520 度，
+       捲成一團，而 75g 時還是正常的 137.8 度，中間沒有任何過渡。
+       分步加載讓每一步都從已收斂的鄰近形狀出發，同一條件回到 138.4 度，
+       且原本就正常的結果完全不受影響（722MRB-20 在 100g：83.9° → 83.8°）。
+    """
     ds = length_cm / (num_points - 1)
-    s_norm = np.linspace(0.0, 1.0, num_points)
+    s_norm = np.linspace(0.0, 1.0, num_points)  # 0 = 元端（握把），1 = 竿先
+
     taper_power = 1.0 + max(0.0, (0.5 - p_flex0) * 4.0)
     dia_profile = tip_dia + (butt_dia - tip_dia) * ((1.0 - s_norm) ** taper_power)
     compliance = (1.0 / (dia_profile ** 3.0)) / k_power
 
-    force_mag = 0.0003 * load_g
-    theta = np.full(num_points, 3.0 * math.pi / 4.0)
-    X, Y = np.zeros(num_points), np.zeros(num_points)
+    # 實心竿先：最前端 (s^8) 大幅軟化。tubular 竿不套用。
+    if is_solid_tip and mu_tip > 1.0:
+        compliance = compliance * (1.0 + (mu_tip * 2.0 - 1.0) * (s_norm ** 8))
+    # 元端補強：靠近握把處 ((1-s)^3) 變硬。
+    if mu_butt > 1.0:
+        compliance = compliance * (1.0 - (1.0 - 1.0 / mu_butt) * ((1.0 - s_norm) ** 3))
 
-    for _ in range(60):
-        dX, dY = ds * np.cos(theta), ds * np.sin(theta)
-        X, Y = np.cumsum(dX) - dX[0], np.cumsum(dY) - dY[0]
-        moment = force_mag * np.maximum(0.0, X - X[-1])
-        dTheta = moment * compliance * ds
-        theta_target = 3.0 * math.pi / 4.0 + np.cumsum(dTheta) - dTheta[0]
-        theta = 0.1 * theta_target + 0.9 * theta
+    theta = np.full(num_points, START_ANGLE_45)
+    X = Y = np.zeros(num_points)
+    for step in range(1, load_steps + 1):
+        force_mag = FORCE_SCALE_45 * load_g * (step / load_steps)
+        for _ in range(sweeps):
+            dX, dY = ds * np.cos(theta), ds * np.sin(theta)
+            X, Y = np.cumsum(dX) - dX[0], np.cumsum(dY) - dY[0]
+            moment = force_mag * np.maximum(0.0, X - X[-1])
+            dTheta = moment * compliance * ds
+            theta_target = START_ANGLE_45 + np.cumsum(dTheta) - dTheta[0]
+            theta = 0.1 * theta_target + 0.9 * theta
     return X, Y
 
+
+def calculate_bending_curve_45deg(rod_data, load_g, num_points=300):
+    specs = rod_data["basic_specifications"]
+    params = rod_data["curve_plotting_parameters"]
+    mat_info = rod_data.get("material_and_structure_effects", {})
+    return solve_bending_45deg(
+        length_cm=parse_length_cm(specs.get("Length")),
+        tip_dia=require_spec(specs, "Tip_Diameter_mm"),
+        butt_dia=require_spec(specs, "Butt_Diameter_mm"),
+        p_flex0=require_spec(params, "initial_flex_point_pct") / 100.0,
+        k_power=require_spec(params, "power_stiffness_factor"),
+        mu_tip=float(params.get("tip_flexibility_multiplier") or 1.0),
+        mu_butt=float(params.get("butt_stiffness_multiplier") or 1.0),
+        is_solid_tip="Solid Tip" in (mat_info.get("Tip_Structure") or ""),
+        load_g=load_g,
+        num_points=num_points,
+    )
+
+
 def get_dynamic_load_list(lure_str):
+    """依該竿的額定負載上限推演階梯，最後補一個固定的搏魚極端值。
+
+    負載區間必須跟著竿子走——0.6〜5g 的 UL 竿與 11〜28g 的 H 竿，
+    合理的取樣點差了一個數量級，套同一組固定克數毫無意義。
+    """
     # 與 parse_lure_max_g 共用同一套解析，避免兩處規則各自漂移
     # （原本這裡與 parser 各寫一份，parser 那份還會抓到區間下限）。
     max_lure = parse_lure_max_g(lure_str)
     if max_lure is None:
         raise ValueError("無法從 {!r} 解析路亞負載上限；請重跑 extract。".format(lure_str))
 
-    extreme_weight = 500 if max_lure > 40 else (250 if max_lure > 15 else 100)
-    loads = [round(max_lure * x, 1) for x in [0.2, 0.5, 1.0, 1.5, 2.0]]
-    loads = sorted(list(set([l for l in loads if l < extreme_weight] + [extreme_weight])))
+    loads = [round(max_lure * ratio, 1) for ratio in LOAD_LADDER_RATIOS]
+    loads = sorted(set([x for x in loads if x < FIGHT_LOAD_G] + [FIGHT_LOAD_G]))
     return [int(x) if x == int(x) else x for x in loads]
 
 def plot_zenaq_comparison(rod_list, category_name, load_g, output_dir):
@@ -537,34 +589,94 @@ def do_plot_zenaq(json_file, output_dir):
 # ==========================================
 # ENGINEERING STYLE PHYSICS & PLOTS
 # ==========================================
+# 水平版竿尖轉角的軟上限（度）。原始腳本用 tanh 做 C∞ 平滑鉗制，
+# 曲線因此永遠不可能捲起來，同時保留飽和前的完整層次。
+MAX_TIP_ANGLE_DEG = 82.0
+
+
 def calculate_bending_curve_horizontal(rod_data, load_g, num_points=300):
+    """水平 0 度起始的工程版彎曲曲線。
+
+    🔴 這一套與 45 度版是**不同的物理模型**，不是換個角度而已：
+       ・剛度用 (d/d_butt)^2.2 並設下限 0.08（正則化，避免細竿尖除爆）
+       ・彎曲區以高斯峰表示，並依 eta_shift 隨負載往元端移動
+       ・實心竿先用 sigmoid 在 s≥0.84 處軟化；3DX 元端補強獨立處理
+       ・力量對負載是次線性（load^0.72），壓縮 100〜1000g 的跨度
+       ・theta 以 tanh 軟鉗制在 82 度
+    先前 repo 版把這些全部換成 45 度解算器的複製品（只把力量係數減半），
+    等於丟掉整套模型。此處依 generate_bending_curves.py 的原始實作還原。
+    """
     specs = rod_data["basic_specifications"]
     params = rod_data["curve_plotting_parameters"]
+    mat_info = rod_data.get("material_and_structure_effects", {})
+
     length_cm = parse_length_cm(specs.get("Length"))
-    tip_dia, butt_dia = require_spec(specs, "Tip_Diameter_mm"), require_spec(specs, "Butt_Diameter_mm")
+    tip_dia = require_spec(specs, "Tip_Diameter_mm")
+    butt_dia = require_spec(specs, "Butt_Diameter_mm")
     p_flex0 = require_spec(params, "initial_flex_point_pct") / 100.0
     k_power = require_spec(params, "power_stiffness_factor")
-    
+    eta_shift = float(params.get("load_transition_shift_rate") or 0.35)
+    mu_tip = float(params.get("tip_flexibility_multiplier") or 1.0)
+    mu_butt = float(params.get("butt_stiffness_multiplier") or 1.0)
+
+    tip_struct = mat_info.get("Tip_Structure") or ""
+    is_solid_tip = "Solid Tip" in tip_struct
+    butt_struct = mat_info.get("Butt_Structure") or ""
+    is_reinforced_butt = ("3DX" in butt_struct) and ("Excluded" not in butt_struct)
+
     ds = length_cm / (num_points - 1)
-    s_norm = np.linspace(0.0, 1.0, num_points)
-    taper_power = 1.0 + max(0.0, (0.5 - p_flex0) * 4.0)
-    dia_profile = tip_dia + (butt_dia - tip_dia) * ((1.0 - s_norm) ** taper_power)
-    compliance = (1.0 / (dia_profile ** 3.0)) / k_power
+    s_norm = np.linspace(0.0, 1.0, num_points)  # 0 = 元端，1 = 竿先
 
-    # Adjusted force for horizontal geometry to get realistic deflections
-    force_mag = 0.00015 * load_g
-    theta = np.full(num_points, 0.0) # Horizontal start
-    X, Y = np.zeros(num_points), np.zeros(num_points)
+    # 1. 基礎斷面剛度（正則化，避免極細竿尖讓 compliance 爆掉）
+    dia_profile = butt_dia - (butt_dia - tip_dia) * s_norm
+    i_base = np.maximum((dia_profile / butt_dia) ** 2.2, 0.08)
 
-    for _ in range(60):
-        dX, dY = ds * np.cos(theta), ds * np.sin(theta)
-        X, Y = np.cumsum(dX) - dX[0], np.cumsum(dY) - dY[0]
-        # Moment arm: distance from tip
-        moment = force_mag * np.maximum(0.0, X[-1] - X)
-        # Bending downwards: negative curvature
-        dTheta = -moment * compliance * ds
-        theta_target = 0.0 + np.cumsum(dTheta) - dTheta[0]
-        theta = 0.1 * theta_target + 0.9 * theta
+    # 2. 彎曲區隨負載往元端移動
+    load_ratio = load_g / 1000.0
+    flex_shift = eta_shift * (load_ratio ** 0.6) * 0.25
+    u_flex = np.clip((1.0 - p_flex0) - flex_shift, 0.20, 0.85)
+    sigma_flex = 0.15 + 0.10 * load_ratio
+    compliance_flex = 1.0 + 1.4 * np.exp(-(((s_norm - u_flex) / sigma_flex) ** 2))
+
+    # 3. 竿先結構
+    if is_solid_tip:
+        tip_compliance = 1.0 + (mu_tip * 1.6 - 1.0) / (1.0 + np.exp(-(s_norm - 0.84) / 0.03))
+    else:
+        tip_compliance = 1.0 + (mu_tip - 1.0) * (s_norm ** 2)
+
+    # 4. 元端補強
+    if is_reinforced_butt:
+        butt_stiffness = 1.0 + 0.35 * np.exp(-((s_norm / 0.40) ** 2))
+    elif mu_butt != 1.0:
+        butt_stiffness = 1.0 + (mu_butt - 1.0) * np.exp(-((s_norm / 0.35) ** 2))
+    else:
+        butt_stiffness = np.ones(num_points)
+
+    compliance = (compliance_flex * tip_compliance) / (i_base * k_power * butt_stiffness)
+
+    # 🟡 同樣是經驗校準的力量係數，非物理推導。
+    force_mag = 0.0000018 * (load_g ** 0.72) / (k_power ** 0.45)
+
+    max_theta = math.radians(MAX_TIP_ANGLE_DEG)
+    X = np.linspace(0.0, length_cm, num_points)
+    Y = np.zeros(num_points)
+    theta = np.zeros(num_points)
+
+    for _ in range(8):
+        moment_arm = np.maximum(0.0, X[-1] - X)
+        curvature = force_mag * moment_arm * np.clip(np.cos(theta), 0.0, 1.0) * compliance
+
+        # 梯形積分求斜角，再以 tanh 平滑鉗制
+        d_theta = 0.5 * (curvature[:-1] + curvature[1:]) * ds
+        theta = np.concatenate(([0.0], np.cumsum(d_theta)))
+        theta = max_theta * np.tanh(theta / max_theta)
+
+        avg_theta = 0.5 * (theta[:-1] + theta[1:])
+        x_new = np.concatenate(([0.0], np.cumsum(ds * np.cos(avg_theta))))
+        y_new = np.concatenate(([0.0], np.cumsum(-ds * np.sin(avg_theta))))
+
+        X = 0.5 * X + 0.5 * x_new
+        Y = 0.5 * Y + 0.5 * y_new
     return X, Y
 
 def plot_engineering_chart(rod_data, output_dir):
@@ -583,11 +695,20 @@ def plot_engineering_chart(rod_data, output_dir):
     calc_action = show_or_missing(taper_info.get("Geometry_Calculated_Action"))
     tip_struct = show_or_missing(mat_info.get("Tip_Structure"))
 
+    # 🔴 負載必須跟著這支竿的額定走，不得寫死克數。
+    #    原本固定 100/250/500/1000g，套在 702UL+FS-ST23（額定 0.6〜5g）上
+    #    就是 20×／50×／100×／200× 額定——那不是彎曲曲線，是把竿子折斷的模擬。
+    max_lure = parse_lure_max_g(specs.get("Lure_Rating"))
+    if max_lure is None:
+        raise ValueError("{} 缺少可解析的路亞負載上限，無法決定繪圖負載。".format(model_name))
+    styles = [("#1f77b4", "-", 2.0), ("#2ca02c", "--", 2.2), ("#ff7f0e", "-.", 2.4), ("#d62728", "-", 2.8)]
+    ladder = [round(max_lure * r, 1) for r in (0.5, 1.0, 2.0)]
+    labels = ["0.5x 額定", "額定上限", "2x 額定"]
+    ladder.append(FIGHT_LOAD_G)
+    labels.append("搏魚")
     loads = [
-        (100, "Light Load (100g)", "#1f77b4", "-", 2.0),
-        (250, "Medium Load (250g)", "#2ca02c", "--", 2.2),
-        (500, "Heavy Load (500g)", "#ff7f0e", "-.", 2.4),
-        (1000, "Max Load (1000g)", "#d62728", "-", 2.8),
+        (load, "{} ({:g}g)".format(label, load), color, style, width)
+        for load, label, (color, style, width) in zip(ladder, labels, styles)
     ]
 
     fig, ax = plt.subplots(figsize=(11, 7), dpi=300)
