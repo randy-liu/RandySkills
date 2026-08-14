@@ -580,6 +580,11 @@ LOAD_LADDER_STEPS = 6
 # 那是額定區間下緣的意義所在，從下限正好起跳就看不到這一段。
 LOAD_LADDER_START_RATIO = 0.8
 
+# 超額負載＝額定上限 × 此倍率，模擬「略微超出原廠建議負載」時的彎曲。
+# 額定上限本身仍是取樣點（那是對齊原廠建議的錨點），超額點是額外追加的。
+# 各竿共用同一倍率，跨竿的超載程度才一致。
+LOAD_OVERLOAD_RATIO = 1.15
+
 # 沒有標示下限時的假設起點（上限的 1/4）。🟡 這是假設，不是原廠資料。
 LOAD_LADDER_FALLBACK_MIN_RATIO = 0.25
 
@@ -659,8 +664,27 @@ def get_dynamic_load_list(lure_str):
     loads = [round(start * (ratio ** i), 1) for i in range(LOAD_LADDER_STEPS)]
     loads[-1] = round(max_lure, 1)  # 最後一段必須剛好落在額定上限
 
-    loads = sorted(set(x for x in loads if x < FIGHT_LOAD_G)) + [FIGHT_LOAD_G]
+    # 額定上限之上再加一個超額點。上限本身保留，因為那是對齊原廠建議的錨點。
+    loads.append(round(max_lure * LOAD_OVERLOAD_RATIO, 1))
+
+    # 搏魚值只在它真的高於額定上限時才有意義——對額定 120g 的竿來說，100g
+    # 落在工作範圍內，不是什麼極端負載。
+    # 🔴 不得用 `x < FIGHT_LOAD_G` 過濾整個階梯：那會把額定上限本身砍掉
+    #    （額定 60〜120g 的竿，120 與超額點 138 都會消失）。
+    if FIGHT_LOAD_G > max_lure:
+        loads.append(FIGHT_LOAD_G)
+
+    loads = sorted(set(loads))
     return [int(x) if x == int(x) else x for x in loads]
+
+
+def load_role(load_g, max_lure):
+    """這個負載在圖上的角色：額定內／超額／搏魚。決定顏色、線型與標籤。"""
+    if load_g == FIGHT_LOAD_G:
+        return "fight"
+    if max_lure is not None and load_g > max_lure:
+        return "overload"
+    return "rated"
 
 def plot_zenaq_comparison(rod_list, category_name, load_g, output_dir):
     fig, ax = plt.subplots(figsize=(12, 8), dpi=300)
@@ -728,11 +752,16 @@ def plot_zenaq_progressive(rod, load_list, output_dir):
     ax.plot(hx, hy, color="#222222", linewidth=6, zorder=5, solid_capstyle='round')
 
     cmap = plt.get_cmap("rainbow")
+    # 標籤與工程圖一致：額定內只寫克數，超出額定與搏魚要點名，
+    # 否則讀者看不出哪一條已經超過原廠建議負載。
+    _, max_lure = parse_lure_range_g(rod.get("basic_specifications", {}).get("Lure_Rating"))
     bounds = [0.0, 0.0, 0.0, 0.0]  # min_x, max_x, min_y, max_y
     for i, load_g in enumerate(load_list):
         color = cmap(i / max(1, len(load_list)-1))
+        role = load_role(load_g, max_lure)
+        label = {"fight": "搏魚 {:g}g", "overload": "超額 {:g}g"}.get(role, "{:g}g").format(load_g)
         X, Y = calculate_bending_curve_45deg(rod, load_g)
-        ax.plot(X, Y, label=f"{load_g}g", color=color, linewidth=2.0, zorder=4)
+        ax.plot(X, Y, label=label, color=color, linewidth=2.0, zorder=4)
         ax.scatter([X[-1]], [Y[-1]], color=color, s=20, zorder=5)
         bounds = [min(bounds[0], float(np.min(X))), max(bounds[1], float(np.max(X))),
                   min(bounds[2], float(np.min(Y))), max(bounds[3], float(np.max(Y)))]
@@ -753,7 +782,8 @@ def plot_zenaq_progressive(rod, load_list, output_dir):
         fig.text(0.87, 0.70, sanitize_text(taper), fontsize=12, color="#555555", ha='center', va='center')
 
     lure_str = rod.get("basic_specifications", {}).get("Lure_Rating")
-    if lure_str: fig.text(0.87, 0.65, f"Lure: {sanitize_text(lure_str)}", fontsize=12, color="#555555", ha='center', va='center')
+    # 與工程圖用語一致：都叫「額定負載」，不要一邊寫 Lure 一邊寫額定。
+    if lure_str: fig.text(0.87, 0.65, f"額定負載 {sanitize_text(lure_str)}", fontsize=11, color="#555555", ha='center', va='center')
 
     # 🔴 範圍必須涵蓋所有畫出來的幾何。原本只追蹤 min_x 與 max_y，
     #    重負載下竿子彎過垂直、曲線往下走，就會被裁掉一整段（看起來像算錯）。
@@ -921,17 +951,26 @@ def plot_engineering_chart(rod_data, output_dir):
     #    就是 20×／50×／100×／200× 額定——那不是彎曲曲線，是把竿子折斷的模擬。
     #    與 progressive 圖共用同一組階梯：兩種圖只差在持竿角度，負載定義必須一致。
     ladder = get_dynamic_load_list(specs.get("Lure_Rating"))
+    _, max_lure = parse_lure_range_g(specs.get("Lure_Rating"))
     cmap = plt.get_cmap("viridis")
+    rated = [x for x in ladder if load_role(x, max_lure) == "rated"]
     loads = []
-    for i, load_g in enumerate(ladder):
-        is_fight = load_g == FIGHT_LOAD_G
-        label = "搏魚 ({:g}g)".format(load_g) if is_fight else "{:g}g".format(load_g)
-        color = "#d62728" if is_fight else cmap(0.12 + 0.62 * i / max(1, len(ladder) - 1))
-        loads.append((load_g, label, color, "-" if is_fight else "-", 2.8 if is_fight else 1.8))
+    for load_g in ladder:
+        role = load_role(load_g, max_lure)
+        if role == "fight":
+            loads.append((load_g, "搏魚 ({:g}g)".format(load_g), "#d62728", "-", 2.8))
+        elif role == "overload":
+            loads.append((load_g, "超額 ({:g}g)".format(load_g), "#ff7f0e", "--", 2.2))
+        else:
+            shade = cmap(0.12 + 0.62 * rated.index(load_g) / max(1, len(rated) - 1))
+            loads.append((load_g, "{:g}g".format(load_g), shade, "-", 1.8))
 
-    fig, ax = plt.subplots(figsize=(11, 7), dpi=300)
+    # 圖表區退到左側，右側留一整欄放圖例與資訊——與 ZENAQ 兩種圖的版面一致。
+    # 原本圖例壓在座標軸右上角，會蓋住輕負載曲線的尾段。
+    fig, ax = plt.subplots(figsize=(15, 7), dpi=300)
     fig.patch.set_facecolor("white")
     ax.set_facecolor("#fcfcfc")
+    fig.subplots_adjust(left=0.06, right=0.66, top=0.88, bottom=0.10)
 
     handle_len = min(35.0, length_cm * 0.16)
     ax.axvspan(-2, handle_len, color="#e0e0e0", alpha=0.4, zorder=1, label="Grip / Reel Seat Zone")
@@ -998,14 +1037,24 @@ def plot_engineering_chart(rod_data, output_dir):
 
     info_text = "\n".join(info_lines)
 
-    props = dict(boxstyle="round,pad=0.6", facecolor="#ffffff", edgecolor="#cccccc", alpha=0.92)
-    ax.text(0.02, 0.04, info_text, transform=ax.transAxes, fontsize=8.5, verticalalignment="bottom", bbox=props, zorder=6, family="sans-serif")
+    # ---- 右欄：額定負載 → 圖例 → 規格／參數 ----
+    # 原廠建議負載獨立標出來，讀者才分得出哪幾條在額定內、哪一條超額、哪一條搏魚。
+    # 座標軸頂端在 figure 的 0.88，所以這一行要放在其上方才不會壓到圖例；
+    # 主標題置中於左側圖表區，右欄在這個高度是空的。
+    fig.text(0.68, 0.935, "額定負載 {}".format(show_or_missing(specs.get("Lure_Rating"))),
+             fontsize=11, fontweight="bold", color="#333333", va="top", family="sans-serif")
 
-    ax.legend(loc="upper right", frameon=True, facecolor="#ffffff", framealpha=0.9, fontsize=9.5)
+    ax.legend(loc="upper left", bbox_to_anchor=(1.03, 1.0), frameon=False,
+              fontsize=9.5, borderaxespad=0.0)
+
+    props = dict(boxstyle="round,pad=0.6", facecolor="#ffffff", edgecolor="#cccccc", alpha=0.92)
+    fig.text(0.68, 0.55, info_text, fontsize=8.5, va="top", bbox=props, family="sans-serif")
 
     out_path = os.path.join(output_dir, "Engineering_Curves", f"{model_name}_Engineering.png")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    fig.savefig(out_path, dpi=300, bbox_inches='tight')
+    # 🔴 不可用 bbox_inches='tight'：它會依內容重新裁切，讓上面 subplots_adjust
+    #    訂好的欄寬失效，右欄的文字位置就會跑掉。
+    fig.savefig(out_path, dpi=300)
     plt.close(fig)
     print(f"[SUCCESS] Generated engineering bending curve plot: {out_path}")
 
