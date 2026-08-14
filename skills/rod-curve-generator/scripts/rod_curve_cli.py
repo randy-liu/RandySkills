@@ -248,11 +248,11 @@ BUTT_OVERCAP_INDEX = 100.0
 #    在後半段乘上 2〜3 倍完全壓不過去（實測只把後段參與從 13% 拉到 17%）。
 #    改為調整整條剖面的對比度：指數 < 1 把落差壓平（整支一起彎），
 #    > 1 把落差放大（彎曲更集中前端）。
-#    校準依據：以「後半段吃掉多少比例的彎曲」為指標。無警示的竿落在 20〜42%，
-#    所以 slim 要高於 42（且接近均勻的 50% ＝整支一起彎）、overcapacity 要低於 20。
-#    0.55 → 702UL+FS-ST23 得 51%／54%；1.8 → 722LRS-21 得 14%／15%。
+#    校準依據：以「後半段吃掉多少比例的彎曲」為指標。無警示的竿落在 31〜37%，
+#    所以 slim 要高於 37（接近整支一起彎）、overcapacity 要低於 31。
+#    0.70 → 702UL+FS-ST23 得 52%／55%；1.6 → 722LRS-21 得 15%／16%。
 #    ⚠️ 這組值綁定 build_compliance() 的剖面，換剖面必須重新校準。
-BUTT_CONTRAST_GAMMA = {"slim": 0.55, "overcapacity": 1.8, "normal": 1.0}
+BUTT_CONTRAST_GAMMA = {"slim": 0.70, "overcapacity": 1.6, "normal": 1.0}
 
 
 def classify_butt_behaviour(butt_dia_mm, butt_excess):
@@ -345,18 +345,10 @@ def derive_curve_parameters(tip_struct, butt_struct, taper_code, tip_dia_mm, but
 
     has_3dx = "3DX" in (butt_struct or "") and "Excluded" not in (butt_struct or "")
 
-    if is_solid:
-        eta = 0.45 if tip_dia_mm <= 0.8 else 0.25
-    elif excess >= 100.0:
-        eta = 0.25
-    elif is_stiffened:
-        eta = 0.40
-    elif taper_ratio <= 6.0:
-        eta = 0.45
-    elif has_3dx and taper_code == "R":
-        eta = 0.42 if max_lure >= 21.0 else 0.38
-    else:
-        eta = 0.35
+    # 🔴 這裡曾經推導 load_transition_shift_rate（eta），驅動一個「隨負載往元端
+    #    移動的高斯彎曲區」。那個高斯峰是竿身中段的局部柔度鉸鏈，畫出來就是
+    #    「竿肚凹」，已於本次移除；eta 隨之失去作用，故一併刪除。
+    #    不要保留印在圖上卻不影響曲線的旋鈕——這個錯誤犯過一次了。
 
     if is_solid:
         mu_tip = 1.35 if tip_dia_mm <= 0.8 else 1.30
@@ -385,7 +377,6 @@ def derive_curve_parameters(tip_struct, butt_struct, taper_code, tip_dia_mm, but
     return {
         "initial_flex_point_pct": flex_point,
         "power_stiffness_factor": k_power,
-        "load_transition_shift_rate": eta,
         "tip_flexibility_multiplier": mu_tip,
         "butt_stiffness_multiplier": mu_butt,
     }
@@ -622,8 +613,8 @@ START_ANGLE_HORIZONTAL = 0.0          # 水平持竿
 #    線性版跨竿範圍 6〜134 度（22 倍），次線性版 19.5〜39.6 度（2 倍）。
 #    「額定上限」的意義就是「掛這個重量時竿子適度受載」，所以各竿在自己的額定
 #    上限下彎曲量本來就該相近——22 倍的範圍是錯的。
-FORCE_SCALE = 0.0000018
-FORCE_LOAD_EXPONENT = 0.72        # 次線性：壓縮輕餌與搏魚負載之間的跨度
+FORCE_SCALE = 0.00001911
+FORCE_LOAD_EXPONENT = 0.55        # 次線性：壓縮輕餌與搏魚負載之間的跨度
 FORCE_STIFFNESS_EXPONENT = 0.45   # 補償竿子硬度，硬竿不會因為額定高就被畫爆
 
 # 竿尖累積轉角的軟上限（度）。tanh 平滑鉗制，曲線因此不可能捲成圈。
@@ -664,42 +655,55 @@ LOAD_OVERLOAD_RATIO = 1.15
 LOAD_LADDER_FALLBACK_MIN_RATIO = 0.25
 
 
+# 柔度剖面的動態範圍上限：竿尖最多只能比元端柔這麼多倍。
+# 🔴 必須有上限，否則 1/d³ 會讓彎曲全部集中在竿尖（702UL+FS-ST23 頭尾差 1180 倍）；
+#    但**不能用 np.maximum 這種硬地板**——那會在接管處造成斜率不連續，畫出來就是
+#    使用者說的「突點、過節不順」。改用 smooth-min，一階導數連續。
+#    20 倍這個值以兩個分佈指標校準：後半段吃掉全部曲率的 31〜37%（竿尖仍主導，
+#    但元端確實參與）、元端三分之一吃掉 13〜18%（「尾部不該死直」的量化版本）。
+COMPLIANCE_RANGE = 20.0
+COMPLIANCE_CAP_SHARPNESS = 3.0
+
+
 def build_compliance(s_norm, tip_dia, butt_dia, p_flex0, k_power, mu_tip, mu_butt,
-                     eta_shift, is_solid_tip, is_reinforced_butt, butt_behaviour, load_g):
+                     is_solid_tip, is_reinforced_butt, butt_behaviour):
     """沿竿身的柔度剖面（s_norm：0 = 元端，1 = 竿先）。**兩種圖共用**。
 
-    🔴 先前 45 度版另有一套 `(1/d³)/k_power`，對細竿尖過度敏感——702UL+FS-ST23
-       的頭尾柔度差 1180 倍，於是軟竿被畫爆、硬竿幾乎不動。此處統一採用水平版
-       的正則化剖面，它是兩者中較完整的（有彎曲區、竿先結構、元端補強）。
+    🔴 這裡刻意只有「平滑的錐度」一個形狀來源。先前的版本額外疊了一個高斯彎曲區
+       （在竿身中段貼一個局部柔度峰），那個峰就是使用者看到的「竿肚凹」——它是
+       一個鉸鏈，不是自然錐度。調性應該由錐度形狀表達，不是靠貼補丁。
     """
-    # 1. 基礎斷面剛度（正則化，避免極細竿尖讓 compliance 爆掉）
-    dia_profile = butt_dia - (butt_dia - tip_dia) * s_norm
-    i_base = np.maximum((dia_profile / butt_dia) ** 2.2, 0.08)
+    # 1. 調性 → 錐度形狀。冪次越大，代表細的那一段越集中在竿尖（先調）。
+    taper_power = 1.0 + max(0.0, (0.5 - p_flex0) * 4.0)
+    dia_profile = tip_dia + (butt_dia - tip_dia) * ((1.0 - s_norm) ** taper_power)
 
-    # 2. 彎曲區隨負載往元端移動
-    load_ratio = load_g / 1000.0
-    flex_shift = eta_shift * (load_ratio ** 0.6) * 0.25
-    u_flex = np.clip((1.0 - p_flex0) - flex_shift, 0.20, 0.85)
-    sigma_flex = 0.15 + 0.10 * load_ratio
-    compliance_flex = 1.0 + 1.4 * np.exp(-(((s_norm - u_flex) / sigma_flex) ** 2))
+    # 2. 薄壁管：柔度 ∝ 1/d³
+    compliance = 1.0 / dia_profile ** 3.0
 
-    # 3. 竿先結構
+    # 3. 平滑飽和（smooth-min），限制竿尖相對元端的柔度倍數
+    cap = compliance[0] * COMPLIANCE_RANGE
+    n = COMPLIANCE_CAP_SHARPNESS
+    compliance = (compliance ** (-n) + cap ** (-n)) ** (-1.0 / n)
+
+    # 4. 竿先結構。實心竿先的過渡寬度放寬到 0.10——原本 0.03 只有竿長的 3%，
+    #    那是另一個潛在的突點。
     if is_solid_tip:
-        tip_compliance = 1.0 + (mu_tip * 1.6 - 1.0) / (1.0 + np.exp(-(s_norm - 0.84) / 0.03))
+        compliance = compliance * (1.0 + (mu_tip * 1.6 - 1.0)
+                                   / (1.0 + np.exp(-(s_norm - 0.84) / 0.10)))
     else:
-        tip_compliance = 1.0 + (mu_tip - 1.0) * (s_norm ** 2)
+        compliance = compliance * (1.0 + (mu_tip - 1.0) * (s_norm ** 2))
 
-    # 4. 元端補強／軟化
+    # 5. 元端補強／軟化
     if is_reinforced_butt:
-        butt_stiffness = 1.0 + 0.35 * np.exp(-((s_norm / 0.40) ** 2))
+        compliance = compliance / (1.0 + 0.35 * np.exp(-((s_norm / 0.40) ** 2)))
     elif mu_butt != 1.0:
-        butt_stiffness = 1.0 + (mu_butt - 1.0) * np.exp(-((s_norm / 0.35) ** 2))
-    else:
-        butt_stiffness = np.ones_like(s_norm)
+        compliance = compliance / (1.0 + (mu_butt - 1.0) * np.exp(-((s_norm / 0.35) ** 2)))
 
-    compliance = (compliance_flex * tip_compliance) / (i_base * k_power * butt_stiffness)
+    # 6. 逐竿正規化：形狀（＝調性）留著，絕對量級交給 k_power 與力量律決定。
+    #    不做的話，1/d³ 的絕對值逐竿差幾十倍，跨竿範圍會炸到 20 倍以上。
+    compliance = compliance / compliance.mean() / k_power
 
-    # 5. 報告的絕對剛度判定（全體纖細／元端過剩）。相對錐度剖面表達不出這兩件事。
+    # 7. 報告的絕對剛度判定（全體纖細／元端過剩）
     return apply_butt_behaviour(compliance, butt_behaviour)
 
 
@@ -735,7 +739,7 @@ def solve_bending(length_cm, compliance, k_power, load_g, start_angle,
     return X, Y
 
 
-def rod_compliance(rod_data, load_g, num_points=300):
+def rod_compliance(rod_data, num_points=300):
     """從 JSON 組出這支竿的柔度剖面。兩個進入點共用，確保判定完全一致。"""
     specs = rod_data["basic_specifications"]
     params = rod_data["curve_plotting_parameters"]
@@ -751,11 +755,9 @@ def rod_compliance(rod_data, load_g, num_points=300):
         k_power=require_spec(params, "power_stiffness_factor"),
         mu_tip=float(params.get("tip_flexibility_multiplier") or 1.0),
         mu_butt=float(params.get("butt_stiffness_multiplier") or 1.0),
-        eta_shift=float(params.get("load_transition_shift_rate") or 0.35),
         is_solid_tip="Solid Tip" in (mat_info.get("Tip_Structure") or ""),
         is_reinforced_butt=("3DX" in butt_struct) and ("Excluded" not in butt_struct),
         butt_behaviour=rod_butt_behaviour(rod_data),
-        load_g=load_g,
     )
 
 
@@ -770,7 +772,7 @@ def calculate_bending_curve_45deg(rod_data, load_g, num_points=300):
     """竿子上舉 45 度（ZENAQ 風格圖）。與水平版只差在持竿角度。"""
     return solve_bending(
         length_cm=parse_length_cm(rod_data["basic_specifications"].get("Length")),
-        compliance=rod_compliance(rod_data, load_g, num_points),
+        compliance=rod_compliance(rod_data, num_points),
         k_power=require_spec(rod_data["curve_plotting_parameters"], "power_stiffness_factor"),
         load_g=load_g,
         start_angle=START_ANGLE_45,
@@ -979,7 +981,7 @@ def calculate_bending_curve_horizontal(rod_data, load_g, num_points=300):
     """
     return solve_bending(
         length_cm=parse_length_cm(rod_data["basic_specifications"].get("Length")),
-        compliance=rod_compliance(rod_data, load_g, num_points),
+        compliance=rod_compliance(rod_data, num_points),
         k_power=require_spec(rod_data["curve_plotting_parameters"], "power_stiffness_factor"),
         load_g=load_g,
         start_angle=START_ANGLE_HORIZONTAL,
@@ -1073,7 +1075,6 @@ def plot_engineering_chart(rod_data, output_dir):
         "[Model Parameters] 繪圖用推估值，非原廠數據",
         "- Initial Flex Point: {}%".format(params.get("initial_flex_point_pct")),
         "- Power Stiffness (Kp): {}".format(params.get("power_stiffness_factor")),
-        "- Load Shift Rate (eta): {}".format(params.get("load_transition_shift_rate")),
         "- Tip Mult: {} | Butt Mult: {}".format(
             params.get("tip_flexibility_multiplier"), params.get("butt_stiffness_multiplier")),
     ]
