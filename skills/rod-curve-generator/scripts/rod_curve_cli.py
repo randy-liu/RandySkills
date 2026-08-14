@@ -237,6 +237,64 @@ def parse_materials(raw_content, tip_dia_mm, model_name):
     }
 
 
+# 元端行為的門檻。🔴 必須與 rod-spec-decrypter 的 calculate_taper.py 一致
+# （`SLIM_BUTT_FLAG = 8.5`、`BUTT_OVERCAP_FLAG = 100.0`）——報告引述的就是那兩條
+# 警示，圖上畫的若是另一套判定，同一支竿就會有兩種互相矛盾的說法。
+SLIM_BUTT_DIA_MM = 8.5
+BUTT_OVERCAP_INDEX = 100.0
+
+# 分類對柔度剖面「對比度」的指數。以「後半段吃掉多少比例的彎曲」為校準目標。
+# 🔴 不能用單純的乘數：竿尖與元端的柔度差距來自 1/d³，702UL+FS-ST23 是 1180 倍，
+#    在後半段乘上 2〜3 倍完全壓不過去（實測只把後段參與從 13% 拉到 17%）。
+#    改為調整整條剖面的對比度：指數 < 1 把落差壓平（整支一起彎），
+#    > 1 把落差放大（彎曲更集中前端）。
+#    校準依據：以「後半段吃掉多少比例的彎曲」為指標，slim 竿要接近均勻（約 50%
+#    ＝整支一起彎），overcapacity 竿要明確墊底。0.72 讓 702UL+FS-ST23 在兩支
+#    解算器都落在 47%；1.25 讓 722LRS-21 降到 6%，低於所有無警示的竿。
+BUTT_CONTRAST_GAMMA = {"slim": 0.72, "overcapacity": 1.25, "normal": 1.0}
+
+
+def classify_butt_behaviour(butt_dia_mm, butt_excess):
+    """元端在受力時的行為：'slim'／'overcapacity'／'normal'。
+
+    報告的兩個關鍵判定都是**絕對尺度**的，而兩支解算器的柔度剖面都只看**相對**
+    錐度（竿尖比屁股細多少），結構上表達不出來：
+
+      ・元徑 < 8.5mm  → 全體纖細 → 中後段缺乏絕對剛度 →「整支一起彎」
+      ・元端過剩 ≥ 100 → 元端在設計負載內不會被撓曲 →「元端不參與作動」
+
+    先前 702UL+FS-ST23（全體纖細）與 722LRS-21（元端過剩）這兩支診斷**相反**的竿，
+    在 45 度圖上被畫成一模一樣的後半段參與度（都是 13%）。
+
+    ⚠️ 兩個條件可能同時成立，此時 **slim 優先**：絕對剛度不足是更強的物理事實，
+       而元端過剩指數的分母含負載上限，輕竿的上限本來就小，容易假性偏高。
+    """
+    if butt_dia_mm is not None and butt_dia_mm < SLIM_BUTT_DIA_MM:
+        return "slim"
+    if butt_excess is not None and butt_excess >= BUTT_OVERCAP_INDEX:
+        return "overcapacity"
+    return "normal"
+
+
+def apply_butt_behaviour(compliance, behaviour):
+    """依元端行為分類調整柔度剖面的對比度。
+
+    以**竿尖的柔度為錨點**（保持不變），只壓縮或放大其餘部位相對於竿尖的落差：
+
+      ・slim         → 指數 < 1，元端柔度被拉近竿尖 → 整支一起彎
+      ・overcapacity → 指數 > 1，元端柔度被推得更低 → 元端幾乎不動
+
+    錨在竿尖是為了不改變「這支竿整體彎多少」，只改變「彎在哪裡」。
+    """
+    gamma = BUTT_CONTRAST_GAMMA.get(behaviour, 1.0)
+    if gamma == 1.0:
+        return compliance
+    ref = float(np.max(compliance))
+    if ref <= 0:
+        return compliance
+    return ref * (compliance / ref) ** gamma
+
+
 def derive_curve_parameters(tip_struct, butt_struct, taper_code, tip_dia_mm, butt_dia_mm,
                             taper_ratio, butt_excess, max_lure):
     """由幾何與調性推導繪圖參數。
@@ -590,7 +648,7 @@ LOAD_LADDER_FALLBACK_MIN_RATIO = 0.25
 
 
 def solve_bending_45deg(length_cm, tip_dia, butt_dia, p_flex0, k_power,
-                        mu_tip, mu_butt, is_solid_tip, load_g,
+                        mu_tip, mu_butt, is_solid_tip, load_g, butt_behaviour="normal",
                         num_points=300, load_steps=40, sweeps=15):
     """45 度持竿的大撓度解算。
 
@@ -611,9 +669,14 @@ def solve_bending_45deg(length_cm, tip_dia, butt_dia, p_flex0, k_power,
     # 實心竿先：最前端 (s^8) 大幅軟化。tubular 竿不套用。
     if is_solid_tip and mu_tip > 1.0:
         compliance = compliance * (1.0 + (mu_tip * 2.0 - 1.0) * (s_norm ** 8))
-    # 元端補強：靠近握把處 ((1-s)^3) 變硬。
-    if mu_butt > 1.0:
+    # 元端補強／軟化：靠近握把處 ((1-s)^3)。
+    # 🔴 條件是 != 1.0 而不是 > 1.0：原本只認補強方向，mu_butt < 1（元徑極細、
+    #    屁股頂不住）會被靜默丟棄——702UL+FS-ST23 的 0.95 從來沒有生效過。
+    if mu_butt != 1.0:
         compliance = compliance * (1.0 - (1.0 - 1.0 / mu_butt) * ((1.0 - s_norm) ** 3))
+
+    # 報告的絕對剛度判定（全體纖細／元端過剩）。相對錐度剖面表達不出這兩件事。
+    compliance = apply_butt_behaviour(compliance, butt_behaviour)
 
     theta = np.full(num_points, START_ANGLE_45)
     X = Y = np.zeros(num_points)
@@ -627,6 +690,13 @@ def solve_bending_45deg(length_cm, tip_dia, butt_dia, p_flex0, k_power,
             theta_target = START_ANGLE_45 + np.cumsum(dTheta) - dTheta[0]
             theta = 0.1 * theta_target + 0.9 * theta
     return X, Y
+
+
+def rod_butt_behaviour(rod_data):
+    """從 JSON 取這支竿的元端行為分類。兩支解算器共用，確保判定一致。"""
+    return classify_butt_behaviour(
+        rod_data.get("basic_specifications", {}).get("Butt_Diameter_mm"),
+        rod_data.get("taper_action_analysis", {}).get("Butt_Excess_Index"))
 
 
 def calculate_bending_curve_45deg(rod_data, load_g, num_points=300):
@@ -643,6 +713,7 @@ def calculate_bending_curve_45deg(rod_data, load_g, num_points=300):
         mu_butt=float(params.get("butt_stiffness_multiplier") or 1.0),
         is_solid_tip="Solid Tip" in (mat_info.get("Tip_Structure") or ""),
         load_g=load_g,
+        butt_behaviour=rod_butt_behaviour(rod_data),
         num_points=num_points,
     )
 
@@ -904,6 +975,9 @@ def calculate_bending_curve_horizontal(rod_data, load_g, num_points=300):
         butt_stiffness = np.ones(num_points)
 
     compliance = (compliance_flex * tip_compliance) / (i_base * k_power * butt_stiffness)
+
+    # 與 45 度解算器共用同一個絕對剛度判定，兩張圖的彎曲分佈才不會互相矛盾。
+    compliance = apply_butt_behaviour(compliance, rod_butt_behaviour(rod_data))
 
     # 🟡 同樣是經驗校準的力量係數，非物理推導。
     force_mag = 0.0000018 * (load_g ** 0.72) / (k_power ** 0.45)
