@@ -35,7 +35,15 @@ except (AttributeError, OSError):
     pass
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from rod_curve_cli import solve_bending, START_ANGLE_HORIZONTAL  # noqa: E402
+# 🔴 一律呼叫引擎**本身**的函式，不得在本檔另寫一套平行實作——
+#    平行實作會自己對自己過關，引擎改壞了也測不出來。
+from rod_curve_cli import (  # noqa: E402
+    build_compliance,
+    classify_butt_behaviour,
+    derive_curve_parameters,
+    solve_bending,
+    START_ANGLE_HORIZONTAL,
+)
 
 IN_MM = 25.4
 
@@ -78,12 +86,14 @@ BLANKS = [
 # 目前已知的最佳擬合（見 references/ccs_calibration.md §3-3）。
 # 🔴 指數 4.0 是**實測擬合出的有效指數，不是物理推導**。宣稱「壁厚正比於直徑所以是
 #    四次方」是錯的——由公佈自重反推的壁厚已否證該假設（corr(k, 元徑) = −0.765）。
-BEST_EXPONENT = 4.0
-BEST_CLAMP_CM = 30.0
-BEST_TAPER_POWER = 1.0
-
 # RMS 驗收門檻。高於此值代表本次修改讓形狀變差，不得合入。
 RMS_GATE_DEG = 5.0
+
+# 鑑別力門檻：模型跨距至少要達到實測跨距的這個比例。
+# 🔴 這一項是**獨立於 RMS 的**。舊版引擎的相關係數其實有 +0.538，但跨距只有 1.6°
+#    （實測 14.0°）——它把每支竿都畫成同一個形狀，只是那個形狀「平均而言」錯得一致。
+#    只看 RMS 或只看相關係數都抓不到這種失效，必須單獨檢查跨距。
+SPREAD_GATE_RATIO = 0.55
 
 # 幾何解釋不了的下限（見 §5）。追求低於此值＝在擬合雜訊。
 IRREDUCIBLE_DEG = 4.0
@@ -117,18 +127,36 @@ def action_angle(compliance, free_len_cm, target_drop_cm, n=N_POINTS):
     return math.degrees(math.atan2(-(Y[-1] - Y[-5]), X[-1] - X[-5]))
 
 
-def build_profile(tip_mm, butt_mm, length_cm, taper_power, exponent, cap, clamp_cm,
-                  n=N_POINTS):
-    """夾持點之後的柔度剖面。夾持段不參與彎曲（CCS 要求竿子前 1 呎水平）。"""
-    s = np.linspace(0.0, 1.0, n)
-    clamped = clamp_cm / length_cm
-    u = clamped + (1.0 - clamped) * s
-    dia = tip_mm + (butt_mm - tip_mm) * ((1.0 - u) ** taper_power)
-    c = 1.0 / dia ** exponent
-    if cap:
-        ceiling = c[0] * cap
-        c = (c ** -3.0 + ceiling ** -3.0) ** (-1.0 / 3.0)
-    return c / c.mean()
+TAPER_CODE = {"Fast": "F", "X-Fast": "X", "Mod-Fast": "R"}
+
+
+def engine_profile(tip_mm, butt_mm, action, n=N_POINTS):
+    """走引擎的完整推導鏈：原廠調性標示 → derive_curve_parameters → build_compliance。
+
+    AA 是定撓曲量下的形狀量，`power_stiffness_factor` 會自動抵銷，所以額定負載
+    在這裡填什麼都不影響結果——只有 flex point 與錐度會進到形狀裡。
+    """
+    params = derive_curve_parameters(
+        tip_struct="Tubular",                      # 本資料集 21 支全為空心
+        butt_struct=None,
+        taper_code=TAPER_CODE.get(action, "F"),
+        tip_dia_mm=tip_mm,
+        butt_dia_mm=butt_mm,
+        taper_ratio=butt_mm / tip_mm,
+        butt_excess=None,
+        max_lure=14.0,                             # 不影響 AA，見 docstring
+    )
+    return build_compliance(
+        s_norm=np.linspace(0.0, 1.0, n),
+        tip_dia=tip_mm,
+        butt_dia=butt_mm,
+        p_flex0=params["initial_flex_point_pct"] / 100.0,
+        k_power=params["power_stiffness_factor"],
+        mu_tip=params["tip_flexibility_multiplier"],
+        mu_butt=params["butt_stiffness_multiplier"],
+        is_reinforced_butt=False,
+        butt_behaviour=classify_butt_behaviour(butt_mm, None),
+    ), params["initial_flex_point_pct"]
 
 
 def sanity_check():
@@ -142,61 +170,64 @@ def sanity_check():
 
 
 def main():
-    p = argparse.ArgumentParser(description="CCS Action Angle 回歸測試")
-    p.add_argument("--exponent", type=float, default=BEST_EXPONENT,
-                   help=f"柔度指數 1/d^n（預設 {BEST_EXPONENT}）")
-    p.add_argument("--cap", default="none",
-                   help="COMPLIANCE_RANGE 上限，或 none（預設 none）")
-    p.add_argument("--taper-power", type=float, default=BEST_TAPER_POWER,
-                   help=f"直徑剖面冪次（預設 {BEST_TAPER_POWER}）")
-    p.add_argument("--clamp", type=float, default=BEST_CLAMP_CM,
-                   help=f"元端夾持長度 cm（預設 {BEST_CLAMP_CM}）")
-    args = p.parse_args()
-    cap = None if str(args.cap).lower() in ("none", "0", "") else float(args.cap)
+    argparse.ArgumentParser(description="CCS Action Angle 回歸測試").parse_args()
 
     print("=" * 74)
     print("彎曲形狀回歸測試 — CCS Action Angle")
     print("=" * 74)
     if not sanity_check():
         sys.exit(1)
-    print(f"參數：指數 1/d^{args.exponent}  cap {args.cap}  "
-          f"taper_power {args.taper_power}  夾持 {args.clamp:.0f}cm")
+    print(f"受測：rod_curve_cli 的 derive_curve_parameters() → build_compliance()"
+          f" → solve_bending()")
     print(SEP)
-    print(f"{'空白竿身':16s} {'錐度比':>7s} {'公佈AA':>7s} {'模型':>7s} {'誤差':>7s}")
+    print(f"{'空白竿身':16s} {'錐度比':>7s} {'調性':>9s} {'起彎點':>7s} "
+          f"{'公佈AA':>7s} {'模型':>7s} {'誤差':>7s}")
 
     est, pub = [], []
-    for name, ln, butt_in, tip_64, _oz, _act, _ip, aa_pub in BLANKS:
+    for name, ln, butt_in, tip_64, _oz, action, _ip, aa_pub in BLANKS:
         L = feet(ln)
         tip = (tip_64 - TIP_SLACK_64) / 64.0 * IN_MM
         butt = butt_in * IN_MM
-        c = build_profile(tip, butt, L, args.taper_power, args.exponent, cap, args.clamp)
-        a = action_angle(c, L - args.clamp, L / 3.0)
+        compliance, flex = engine_profile(tip, butt, action)
+        a = action_angle(compliance, L, L / 3.0)
         est.append(a)
         pub.append(aa_pub)
-        print(f"{name:16s} {butt/tip:7.2f} {aa_pub:7.1f} {a:7.1f} {a-aa_pub:+7.1f}")
+        print(f"{name:16s} {butt/tip:7.2f} {action:>9s} {flex:6.0f}% "
+              f"{aa_pub:7.1f} {a:7.1f} {a-aa_pub:+7.1f}")
 
     est, pub = np.array(est), np.array(pub)
     rms = float(np.sqrt(((est - pub) ** 2).mean()))
     bias = float((est - pub).mean())
+    spread, pub_spread = est.max() - est.min(), pub.max() - pub.min()
 
     print(SEP)
     print(f"RMS 誤差   {rms:6.1f}°     （驗收門檻 {RMS_GATE_DEG:.0f}°）")
     print(f"平均偏差   {bias:+6.1f}°")
-    print(f"模型跨距   {est.max()-est.min():6.1f}°    公佈跨距 {pub.max()-pub.min():.1f}°")
+    print(f"模型跨距   {spread:6.1f}°    公佈跨距 {pub_spread:.1f}°"
+          f"     （門檻：至少 {SPREAD_GATE_RATIO*100:.0f}% ＝ {pub_spread*SPREAD_GATE_RATIO:.1f}°）")
     print(f"相關係數   {np.corrcoef(est, pub)[0, 1]:+6.3f}")
     print("")
 
-    if est.max() - est.min() < pub.max() - pub.min() - 6.0:
-        print("🔴 **警示：模型跨距遠小於實測跨距——引擎對錐度差異缺乏鑑別力。**")
-        print("    典型成因是柔度剖面被 cap 壓平；此時 RMS 就算勉強及格也不代表形狀畫對了。")
+    failed = False
+    if spread < pub_spread * SPREAD_GATE_RATIO:
+        print(f"🔴 **未通過：模型跨距 {spread:.1f}° 不足實測跨距的 "
+              f"{SPREAD_GATE_RATIO*100:.0f}%——引擎對錐度差異缺乏鑑別力。**")
+        print("    典型成因是柔度剖面被上限壓平。此時 RMS 與相關係數都可能好看，")
+        print("    但每支竿其實被畫成同一個形狀，只是那個形狀平均而言錯得一致。")
         print("")
+        failed = True
 
     if rms > RMS_GATE_DEG:
         print(f"🔴 **未通過：RMS {rms:.1f}° 高於門檻 {RMS_GATE_DEG:.0f}°。**")
         print("    請勿以此組參數出圖，也不要為了通過而放寬門檻。")
+        print("")
+        failed = True
+
+    if failed:
         sys.exit(1)
 
-    print(f"✅ 通過（RMS {rms:.1f}° ≤ {RMS_GATE_DEG:.0f}°）。")
+    print(f"✅ 通過（RMS {rms:.1f}° ≤ {RMS_GATE_DEG:.0f}°，跨距 {spread:.1f}° ≥ "
+          f"{pub_spread*SPREAD_GATE_RATIO:.1f}°）。")
     print("")
     print(SEP)
     print(f"⚠️  幾何解釋不了的下限約 ±{IRREDUCIBLE_DEG:.0f}°：碳布疊層與模數分佈無任何廠商公佈。")

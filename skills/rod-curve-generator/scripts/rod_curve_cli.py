@@ -243,16 +243,20 @@ def parse_materials(raw_content, tip_dia_mm, model_name):
 SLIM_BUTT_DIA_MM = 8.5
 BUTT_OVERCAP_INDEX = 100.0
 
-# 分類對柔度剖面「對比度」的指數。以「後半段吃掉多少比例的彎曲」為校準目標。
-# 🔴 不能用單純的乘數：竿尖與元端的柔度差距來自 1/d³，702UL+FS-ST23 是 1180 倍，
-#    在後半段乘上 2〜3 倍完全壓不過去（實測只把後段參與從 13% 拉到 17%）。
-#    改為調整整條剖面的對比度：指數 < 1 把落差壓平（整支一起彎），
-#    > 1 把落差放大（彎曲更集中前端）。
-#    校準依據：以「後半段吃掉多少比例的彎曲」為指標。無警示的竿落在 31〜37%，
-#    所以 slim 要高於 37（接近整支一起彎）、overcapacity 要低於 31。
-#    0.70 → 702UL+FS-ST23 得 52%／55%；1.6 → 722LRS-21 得 15%／16%。
-#    ⚠️ 這組值綁定 build_compliance() 的剖面，換剖面必須重新校準。
-BUTT_CONTRAST_GAMMA = {"slim": 0.70, "overcapacity": 1.6, "normal": 1.0}
+# 分類對柔度剖面「對比度」的指數：< 1 把落差壓平（整支一起彎），> 1 把落差放大
+# （彎曲更集中前端）。不能用單純的乘數——竿尖與元端的柔度差距是幾百倍起跳，
+# 在後半段乘上 2〜3 倍完全壓不過去。
+#
+# 🔴 **這組值已隨柔度定律改版重新校準過，舊值（0.70 / 1.6）不可沿用。**
+#    舊值是配合被 cap 壓平的剖面（頭尾差約 20 倍）訂的。新剖面頭尾差上千倍，
+#    對它取 0.70 次方會把整支竿拉成一根等剛度棍子，取 1.6 次方則會直接撞上
+#    竿尖轉角的 tanh 鉗制（實測 702UL+FS-ST23 在 1.20 就衝到 150°）。
+#
+# 校準目標：一個絕對剛度警示應該把 Action Angle 推動約 ±5〜7°，
+# 也就是實測跨距（14°）的一半左右——夠明顯，但不足以蓋過幾何本身。
+#    實測 0.88 → −4.6〜−7.5°；1.12 → +2.4〜+6.5°。
+# ⚠️ 這組值綁定 build_compliance() 的剖面，換剖面必須重新校準。
+BUTT_CONTRAST_GAMMA = {"slim": 0.88, "overcapacity": 1.12, "normal": 1.0}
 
 
 def classify_butt_behaviour(butt_dia_mm, butt_excess):
@@ -311,7 +315,12 @@ def derive_curve_parameters(tip_struct, butt_struct, taper_code, tip_dia_mm, but
 
     if is_solid:
         flex_point = 22.0 if tip_dia_mm <= 0.8 else (25.0 if tip_dia_mm <= 1.2 else 28.0)
-    elif taper_code == "F":
+    elif taper_code in ("F", "X"):
+        # 🔴 `X`（Extra Fast）先前沒有分支，會一路掉到下面的 `taper_ratio >= 7.0 → 44.0`，
+        #    也就是被畫得**比 F 還慢**——方向明顯錯了。
+        # ⚠️ 但這裡刻意**不給 X 一個比 F 更快的值**：CCS 資料集裡只有 2 支 X-Fast
+        #    （AA 71.5 與 74.5），與 18 支 Fast（平均 73.5）**量不出差異**。
+        #    在沒有證據的情況下替 X 發明一個數字，就是在編造。有樣本再說。
         flex_point = 30.0 if tip_dia_mm <= 1.4 else 35.0
     elif is_stiffened:
         flex_point = 42.0
@@ -602,8 +611,16 @@ def get_rod_color(idx, total):
 START_ANGLE_45 = 3.0 * math.pi / 4.0  # 135 度：竿子上舉 45 度、指向左上
 START_ANGLE_HORIZONTAL = 0.0          # 水平持竿
 
-# 力量係數。🟡 經驗校準值，不是從材料力學推導出來的，因此**曲線之間的相對關係
-# 可信，絕對撓曲量不可信**——不得拿圖上的公分數去對照實測。
+# 力量係數。
+#
+# 🟡 **絕對量級現在有錨了，但只錨得住「平均」，錨不住「單支」。**
+#    FORCE_SCALE 由 20 支已公佈 CCS Intrinsic Power（把竿尖壓到下沉 1/3 全長所需的
+#    克數）校準：幾何平均比值 1.00，但**逐支散佈達 ×/÷ 1.68**，
+#    log 相關係數 +0.756。也就是說某一支竿的撓曲量可能偏差近 7 成。
+#    → 圖上的公分數可以用來比較竿與竿，**仍不得拿去對照實測**。
+#    → 散佈的來源是 k_power：它只能從「額定路亞重量」猜竿子的剛度，而 IP 真正取決於
+#      碳布模數與管壁厚度，兩者皆無廠商公佈。這是資料的極限，不是係數沒調好。
+#      重調 k_power 對照表能收斂多少，尚未驗證。
 #
 # 🔴 兩種圖只能有這一組。先前 45 度版用 `0.0003 × load`（線性，且不補償竿子硬度），
 #    水平版用這組次線性帶硬度補償的——兩支是不同時間寫的獨立腳本，各自用眼睛校準
@@ -613,7 +630,9 @@ START_ANGLE_HORIZONTAL = 0.0          # 水平持竿
 #    線性版跨竿範圍 6〜134 度（22 倍），次線性版 19.5〜39.6 度（2 倍）。
 #    「額定上限」的意義就是「掛這個重量時竿子適度受載」，所以各竿在自己的額定
 #    上限下彎曲量本來就該相近——22 倍的範圍是錯的。
-FORCE_SCALE = 0.00001911
+# ⚠️ 這個數字綁定 build_compliance() 第 7 步的正規化方式。換掉那個分母就必須
+#    重跑 IP 校準，否則整批圖的撓曲量會整體偏掉（換分母時已經發生過一次）。
+FORCE_SCALE = 0.0000013596
 FORCE_LOAD_EXPONENT = 0.55        # 次線性：壓縮輕餌與搏魚負載之間的跨度
 FORCE_STIFFNESS_EXPONENT = 0.45   # 補償竿子硬度，硬竿不會因為額定高就被畫爆
 
@@ -655,49 +674,88 @@ LOAD_OVERLOAD_RATIO = 1.15
 LOAD_LADDER_FALLBACK_MIN_RATIO = 0.25
 
 
-# 柔度剖面的動態範圍上限：竿尖最多只能比元端柔這麼多倍。
-# 🔴 必須有上限，否則 1/d³ 會讓彎曲全部集中在竿尖（702UL+FS-ST23 頭尾差 1180 倍）；
-#    但**不能用 np.maximum 這種硬地板**——那會在接管處造成斜率不連續，畫出來就是
-#    使用者說的「突點、過節不順」。改用 smooth-min，一階導數連續。
-#    20 倍這個值以兩個分佈指標校準：後半段吃掉全部曲率的 31〜37%（竿尖仍主導，
-#    但元端確實參與）、元端三分之一吃掉 13〜18%（「尾部不該死直」的量化版本）。
-COMPLIANCE_RANGE = 20.0
+# =============================================================================
+# 柔度定律
+# =============================================================================
+# 柔度 ∝ 1/d^COMPLIANCE_EXPONENT。
+#
+# 🔴 **4.0 是實測擬合出來的「有效指數」，不是從物理推導出來的。**
+#    對 21 支已公佈 CCS Action Angle 的空白竿身做網格擬合，指數 3.0 的最佳 RMS 是
+#    10.1°，3.5 是 4.5°，4.0 是 3.6°（偏差 0.0°）。詳見 references/ccs_calibration.md。
+#
+# ⚠️ **不要在報告或註解裡替它補一個好聽的推導。** 最誘人的那個是
+#    「I = πd³t/8，若壁厚 t ∝ d 則 I ∝ d⁴」——**那個推導已被本 repo 的資料否證**：
+#    由官方公佈的空白竿身自重反推壁厚，k = t/d 與元徑的相關係數是 −0.765
+#    （細竿的壁相對更厚，不是等比例）。4.0 吸收的是壁厚錐化、疊層落差、模數分佈
+#    等一整包效應，只有「它擬合得最好」這一個依據。
+COMPLIANCE_EXPONENT = 4.0
+
+# 柔度剖面的數值安全上限（竿尖相對元端的倍率）。
+#
+# 🔴 **這是防數值爆炸的護欄，不是物理參數，不得拿它來調形狀。**
+#    先前這裡是 `COMPLIANCE_RANGE = 20.0`，被當成物理限制在用，理由是
+#    「不設限的話 1/d³ 會讓彎曲全部集中在竿尖」。CCS 資料證明那是錯的：
+#    20 倍的上限會把錐度**整個抹平**——cap 開著時把 taper_power 從 0.575 掃到 2.0，
+#    Action Angle 只從 39.9° 動到 41.2°，等於調性參數完全失效。實測後果是
+#    21 支錐度比 5.20〜8.38 的竿，引擎全部畫成 43.1〜43.7°（實測 68〜82°）。
+#    → 上限拉到 5000 之後它實質不再作用於任何真實幾何，只在極端輸入時擋住溢位。
+COMPLIANCE_CEILING = 5000.0
 COMPLIANCE_CAP_SHARPNESS = 3.0
+
+# 直徑剖面冪次的映射：taper_power = TAPER_POWER_INTERCEPT − TAPER_POWER_SLOPE × 起彎點
+#
+# 🔴 **這條映射的方向與先前相反，是被 CCS 資料改過來的。**
+#    舊版是 `0.5 + 3.75 × (起彎點 − 0.2)`：起彎點越靠竿尖 → 冪次**越小**。
+#    當時的理由是「冪次越大，中段越早變細，那是胴調」——只看直徑形狀，
+#    **沒有算進「竿尖的力臂是零」**。冪次 <1 會把「細」全部擠到最後一兩公分，
+#    而那裡沒有力矩，那段細完全不產生彎曲；剩下的彎曲只好平均分佈到粗的部分 → 反而是胴調。
+#    實測（d⁴、無 cap）：冪次 0.4 → AA 47.3°、元端三分之一吃掉 25.7% 的彎曲；
+#    冪次 1.5 → AA 75.5°、元端三分之一只吃 4.1%。**冪次越大越先調**，與舊版相反。
+# ⚠️ 上緣約 1.5 之後 AA 會回頭下降（曲線在竿尖飽和），故 clip 不得超過 1.6。
+#
+# 截距由 CCS 資料校準：21 支中有 18 支原廠標 Fast，經 derive_curve_parameters 得起彎點
+# 35%，此時 taper_power = 1.15，平均偏差最接近 0。斜率則決定 F 與 R 之間拉開多少。
+TAPER_POWER_INTERCEPT = 2.17
+TAPER_POWER_SLOPE = 2.92
+TAPER_POWER_MIN = 0.55
+TAPER_POWER_MAX = 1.60
 
 
 def build_compliance(s_norm, tip_dia, butt_dia, p_flex0, k_power, mu_tip, mu_butt,
-                     is_solid_tip, is_reinforced_butt, butt_behaviour):
+                     is_reinforced_butt, butt_behaviour):
     """沿竿身的柔度剖面（s_norm：0 = 元端，1 = 竿先）。**兩種圖共用**。
 
     🔴 這裡刻意只有「平滑的錐度」一個形狀來源。先前的版本額外疊了一個高斯彎曲區
        （在竿身中段貼一個局部柔度峰），那個峰就是使用者看到的「竿肚凹」——它是
        一個鉸鏈，不是自然錐度。調性應該由錐度形狀表達，不是靠貼補丁。
+
+    🔴 **實心竿先在這裡沒有專屬分支，這是刻意的。**
+       先前的版本給實心竿先貼一個 `mu_tip × 1.6` 的 sigmoid 柔度隆起，理由是
+       「空心轉實心之後彎曲弧度會明顯變大」。那個現象是真的，但成因不是它：
+       ・由官方公佈的空白竿身自重反推壁厚，k = t/d ≈ 0.08。以這個壁厚，實心段
+         嵌進管內之後的柔度是所在管段的 **0.78 倍**（略硬），**接點根本沒有柔度階梯**。
+       ・直接測試也一致：人工塞一個 3 倍階梯進去，Action Angle 只從 71.3° 動到 82.3°。
+       實心唯一的本事是「空心做不到 0.7mm，它做得到」——而**官方的先徑欄位本身就已經
+       完整記載了這件事**。真正的 bug 是舊的冪次映射把那個「細」擠到最後一公分，
+       而竿尖的力臂是零：**細在沒有力矩的地方，等於沒有細。** 映射修正後即自然浮現。
+       → 因此本函式不需要知道竿先是實心還是空心。詳見 references/ccs_calibration.md §4。
     """
-    # 1. 調性 → 錐度形狀。
-    # 🔴 這條映射原本是反的：`1 + max(0, (0.5 - p_flex0) * 4)` 給先調竿**更大**的
-    #    冪次。但冪次越大，竿身在中段就越早變細、細的部分佔全長越多——那是胴調。
-    #    實測後果是先調竿的後半段參與（34〜52%）反而高於胴調竿（31〜34%），方向顛倒。
-    #    這個錯誤先前被 p_flex0 重複除 100 的 bug 蓋住了（那時冪次恆為 2.98），
-    #    修掉那個 bug、又讓錐度成為唯一的形狀來源之後才浮出來。
-    #    正確關係：起彎點越靠竿尖（p_flex0 小）→ 冪次越小 → 中段維持粗 → 先調。
-    taper_power = float(np.clip(0.5 + 3.75 * (p_flex0 - 0.2), 0.4, 2.5))
+    # 1. 調性 → 錐度形狀。方向與依據見 TAPER_POWER_* 常數的註解。
+    taper_power = float(np.clip(TAPER_POWER_INTERCEPT - TAPER_POWER_SLOPE * p_flex0,
+                                TAPER_POWER_MIN, TAPER_POWER_MAX))
     dia_profile = tip_dia + (butt_dia - tip_dia) * ((1.0 - s_norm) ** taper_power)
 
-    # 2. 薄壁管：柔度 ∝ 1/d³
-    compliance = 1.0 / dia_profile ** 3.0
+    # 2. 柔度 ∝ 1/d^n（n 為實測有效指數，見 COMPLIANCE_EXPONENT 的註解）
+    compliance = 1.0 / dia_profile ** COMPLIANCE_EXPONENT
 
-    # 3. 平滑飽和（smooth-min），限制竿尖相對元端的柔度倍數
-    cap = compliance[0] * COMPLIANCE_RANGE
+    # 3. 數值護欄。用 smooth-min 而非 np.maximum 這種硬地板——硬地板會在接管處
+    #    造成斜率不連續，畫出來就是「突點、過節不順」。
+    cap = compliance[0] * COMPLIANCE_CEILING
     n = COMPLIANCE_CAP_SHARPNESS
     compliance = (compliance ** (-n) + cap ** (-n)) ** (-1.0 / n)
 
-    # 4. 竿先結構。實心竿先的過渡寬度放寬到 0.10——原本 0.03 只有竿長的 3%，
-    #    那是另一個潛在的突點。
-    if is_solid_tip:
-        compliance = compliance * (1.0 + (mu_tip * 1.6 - 1.0)
-                                   / (1.0 + np.exp(-(s_norm - 0.84) / 0.10)))
-    else:
-        compliance = compliance * (1.0 + (mu_tip - 1.0) * (s_norm ** 2))
+    # 4. 竿先材質的微調（實心/高彈性碳布造成的柔度差異，量級遠小於幾何）
+    compliance = compliance * (1.0 + (mu_tip - 1.0) * (s_norm ** 2))
 
     # 5. 元端補強／軟化
     if is_reinforced_butt:
@@ -705,12 +763,22 @@ def build_compliance(s_norm, tip_dia, butt_dia, p_flex0, k_power, mu_tip, mu_but
     elif mu_butt != 1.0:
         compliance = compliance / (1.0 + (mu_butt - 1.0) * np.exp(-((s_norm / 0.35) ** 2)))
 
-    # 6. 逐竿正規化：形狀（＝調性）留著，絕對量級交給 k_power 與力量律決定。
-    #    不做的話，1/d³ 的絕對值逐竿差幾十倍，跨竿範圍會炸到 20 倍以上。
-    compliance = compliance / compliance.mean() / k_power
+    # 6. 報告的絕對剛度判定（全體纖細／元端過剩）。
+    #    ⚠️ 必須在正規化**之前**——它會改變剖面形狀，形狀一動撓曲量就跟著動。
+    compliance = apply_butt_behaviour(compliance, butt_behaviour)
 
-    # 7. 報告的絕對剛度判定（全體纖細／元端過剩）
-    return apply_butt_behaviour(compliance, butt_behaviour)
+    # 7. 逐竿正規化：形狀（＝調性）留著，絕對量級交給 k_power 與力量律決定。
+    #
+    # 🔴 **除以「該剖面實際產生的撓曲量」，不是除以 compliance.mean()。**
+    #    小撓度懸臂梁在竿尖受力時，竿尖撓曲量 δ ∝ ∫ c(s)·(1−s)² ds
+    #    （力矩 ∝ 到竿尖的距離，再乘一次力臂積分回位移）。除以這個積分，
+    #    「形狀」與「整體彎多少」才是解耦的。
+    #    除以平均值不行：平均值會被竿尖的柔度尖峰主導，剖面一旦變陡（例如本次把
+    #    上限從 20 倍放到實質不設限），分母暴增，整支竿的撓曲量會跟著崩掉。
+    #    實測：改指數與上限之後，702UL+FS-ST23 在額定 5g 的竿尖下沉從 63cm 掉到 7cm，
+    #    就是這個分母造成的假性變硬——形狀是對的，量級卻壞了。
+    weight = float(np.trapz(compliance * (1.0 - s_norm) ** 2, s_norm))
+    return compliance / weight / k_power
 
 
 def solve_bending(length_cm, compliance, k_power, load_g, start_angle,
@@ -761,7 +829,6 @@ def rod_compliance(rod_data, num_points=300):
         k_power=require_spec(params, "power_stiffness_factor"),
         mu_tip=float(params.get("tip_flexibility_multiplier") or 1.0),
         mu_butt=float(params.get("butt_stiffness_multiplier") or 1.0),
-        is_solid_tip="Solid Tip" in (mat_info.get("Tip_Structure") or ""),
         is_reinforced_butt=("3DX" in butt_struct) and ("Excluded" not in butt_struct),
         butt_behaviour=rod_butt_behaviour(rod_data),
     )
