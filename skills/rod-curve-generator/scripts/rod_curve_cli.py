@@ -333,24 +333,31 @@ def derive_curve_parameters(tip_struct, butt_struct, taper_code, tip_dia_mm, but
     else:
         flex_point = 45.0
 
+    # 🔴 **這張階梯表必須單調遞增。** 額定越重的竿只可能越硬，不可能越軟——
+    #    出現「額定更高卻拿到更低的 k_power」就一定是 bug，不是設計。
+    #    先前有兩處違反，兩處都是把「某一支特定的竿」包裝成規則：
+    #      ・`elif max_lure <= 11.0: 1.25` —— 夾在 1.6 與 1.75 之間卻更低。
+    #        額定 1.8〜11g 的竿只有一支，這格是為它開的。已刪除，該區間回到 1.75。
+    #      ・`elif max_lure >= 28.0: 3.0 / else: 2.0` —— 21〜28g 掉進 else 拿到 2.0，
+    #        比額定 21g 的 2.5 還低。已改為把 2.5 這一格延伸到 28。
+    #    ⚠️ 兩處都**不引入新數值**，只是刪掉夾層／延伸既有級距。表中的數字仍是
+    #       🟡 人工訂的經驗值，本次沒有重新校準（理由見下方 k_power 的說明）。
+    #    這與本函式 docstring 中已移除的 `tip_dia_mm == 1.6 and taper_ratio == 6.50`
+    #    是同一種毛病：用規則的外觀去指定單一機種。新增級距前先確認不是在做這件事。
     if max_lure <= 5.0:
         k_power = 1.1 if is_solid else 1.2
     elif max_lure <= 7.0:
         k_power = 1.5
     elif max_lure <= 10.0:
         k_power = 1.6
-    elif max_lure <= 11.0:
-        k_power = 1.25
     elif max_lure <= 14.0:
         k_power = 1.75
     elif max_lure <= 18.0:
         k_power = 2.0
-    elif max_lure <= 21.0:
+    elif max_lure < 28.0:
         k_power = 2.5
-    elif max_lure >= 28.0:
-        k_power = 3.0
     else:
-        k_power = 2.0
+        k_power = 3.0
 
     has_3dx = "3DX" in (butt_struct or "") and "Excluded" not in (butt_struct or "")
 
@@ -615,8 +622,8 @@ START_ANGLE_HORIZONTAL = 0.0          # 水平持竿
 #
 # 🟡 **絕對量級現在有錨了，但只錨得住「平均」，錨不住「單支」。**
 #    FORCE_SCALE 由 20 支已公佈 CCS Intrinsic Power（把竿尖壓到下沉 1/3 全長所需的
-#    克數）校準：幾何平均比值 1.00，但**逐支散佈達 ×/÷ 1.68**，
-#    log 相關係數 +0.756。也就是說某一支竿的撓曲量可能偏差近 7 成。
+#    克數）校準：幾何平均比值 1.00，但**逐支散佈達 ×/÷ 1.47**，
+#    log 相關係數 +0.783。也就是說某一支竿的撓曲量可能偏差近 5 成。
 #    → 圖上的公分數可以用來比較竿與竿，**仍不得拿去對照實測**。
 #    → 散佈的來源是 k_power：它只能從「額定路亞重量」猜竿子的剛度，而 IP 真正取決於
 #      碳布模數與管壁厚度，兩者皆無廠商公佈。這是資料的極限，不是係數沒調好。
@@ -632,7 +639,7 @@ START_ANGLE_HORIZONTAL = 0.0          # 水平持竿
 #    上限下彎曲量本來就該相近——22 倍的範圍是錯的。
 # ⚠️ 這個數字綁定 build_compliance() 第 7 步的正規化方式。換掉那個分母就必須
 #    重跑 IP 校準，否則整批圖的撓曲量會整體偏掉（換分母時已經發生過一次）。
-FORCE_SCALE = 0.0000013596
+FORCE_SCALE = 0.0000015735
 FORCE_LOAD_EXPONENT = 0.55        # 次線性：壓縮輕餌與搏魚負載之間的跨度
 FORCE_STIFFNESS_EXPONENT = 0.45   # 補償竿子硬度，硬竿不會因為額定高就被畫爆
 

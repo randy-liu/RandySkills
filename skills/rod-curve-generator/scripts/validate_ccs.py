@@ -169,13 +169,39 @@ def sanity_check():
     return ok
 
 
+def monotonic_check():
+    """k_power 階梯表必須單調遞增：額定越重的竿只可能越硬，不可能越軟。
+
+    🔴 這道檢查與 AA 無關，是獨立的結構檢查。曾經有兩格違反（額定 11g 與 21〜28g），
+       兩格都是把單一機種包裝成規則。AA 測試抓不到這種錯——k_power 只改變「彎多少」，
+       不改變「彎在哪」，所以形狀分數完全正常。
+    """
+    prev_lure, prev_k, bad = None, None, []
+    for lure in [x / 2.0 for x in range(2, 121)]:      # 1.0 〜 60.0 g，每 0.5g
+        k = derive_curve_parameters("Tubular", None, "F", 1.7, 10.9, 6.4, None, lure
+                                    )["power_stiffness_factor"]
+        if prev_k is not None and k < prev_k - 1e-9:
+            bad.append((prev_lure, prev_k, lure, k))
+        prev_lure, prev_k = lure, k
+    if bad:
+        print("[單調檢查] 🔴 **k_power 階梯表不單調——額定變重卻變軟：**")
+        for a, ka, b, kb in bad:
+            print(f"           額定 {a:.1f}g → {ka:.2f}   但額定 {b:.1f}g → {kb:.2f}")
+        print("           這一定是 bug。通常成因是有人為了單一機種插了一格夾層。")
+        return False
+    print("[單調檢查] ✅ k_power 階梯表單調遞增（額定 1〜60g 全掃）")
+    return True
+
+
 def main():
     argparse.ArgumentParser(description="CCS Action Angle 回歸測試").parse_args()
 
     print("=" * 74)
     print("彎曲形狀回歸測試 — CCS Action Angle")
     print("=" * 74)
-    if not sanity_check():
+    ok_measure = sanity_check()
+    ok_monotonic = monotonic_check()
+    if not ok_measure:
         sys.exit(1)
     print(f"受測：rod_curve_cli 的 derive_curve_parameters() → build_compliance()"
           f" → solve_bending()")
@@ -208,7 +234,7 @@ def main():
     print(f"相關係數   {np.corrcoef(est, pub)[0, 1]:+6.3f}")
     print("")
 
-    failed = False
+    failed = not ok_monotonic
     if spread < pub_spread * SPREAD_GATE_RATIO:
         print(f"🔴 **未通過：模型跨距 {spread:.1f}° 不足實測跨距的 "
               f"{SPREAD_GATE_RATIO*100:.0f}%——引擎對錐度差異缺乏鑑別力。**")
