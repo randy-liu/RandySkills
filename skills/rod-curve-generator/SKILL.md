@@ -47,6 +47,20 @@ python <skill_dir>/scripts/validate_ccs.py
 🔴 **不得為了通過而放寬門檻。** 資料來源、量測協定與每一條結論的推導見
 `references/ccs_calibration.md`；該檔第 6 節記錄了**已窮盡的查證途徑**，別再重跑。
 
+### 🔴 改完參數規則，一定要重跑 `extract`——不能只重畫
+
+`derive_curve_parameters()`（起彎點、`k_power`、竿先／元端乘數）是在 **`extract` 階段**執行的，
+結果被寫死進 `extracted_rod_data.json` 的 `curve_plotting_parameters`。
+`plot-zenaq` 與 `plot-engineering` **只是讀那份 JSON**，不會重新推導。
+
+→ 所以只改 `derive_curve_parameters()` 然後直接重畫，**圖不會變**（或只變一半），
+　 而且圖上 `[Model Parameters]` 印的還是舊值——看起來像修改沒生效，其實是資料沒更新。
+
+**正確順序永遠是**：改程式 → `validate_ccs` → **`extract`** → `plot-zenaq` → `plot-engineering`。
+
+⚠️ 反之，改 `build_compliance()`／`solve_bending()`／`FORCE_SCALE` 這類**繪圖時才用到**的東西，
+重畫即可，不必重跑 `extract`。分界線是「這個值有沒有被寫進 JSON」。
+
 ## Quick Start
 ```bash
 # 1. Ask the user for permission to use `uv run` if dependencies are a concern.
