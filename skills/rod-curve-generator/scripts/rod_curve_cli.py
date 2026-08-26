@@ -714,7 +714,13 @@ COMPLIANCE_CAP_SHARPNESS = 3.0
 # ⚠️ 上緣約 1.5 之後 AA 會回頭下降（曲線在竿尖飽和），故 clip 不得超過 1.6。
 #
 # 截距由 CCS 資料校準：21 支中有 18 支原廠標 Fast，經 derive_curve_parameters 得起彎點
-# 35%，此時 taper_power = 1.15，平均偏差最接近 0。斜率則決定 F 與 R 之間拉開多少。
+# 35%，此時 taper_power = 1.15，平均偏差最接近 0。
+#
+# 🔴 **但斜率（F 與 R 之間拉開多少）幾乎沒有資料支撐——它是外推的。**
+#    校準集 21 支裡 18 支標 Fast、2 支 X-Fast、1 支 Mod-Fast，實質只約束了「F」這一個點。
+#    而且「Fast」是行銷詞彙不是物理量，Rainshadow 的 Fast 未必等於 DAIWA 的 `F`。
+#    → 本檔所有常數中，**這一項的跨廠風險最高**。拿到第二個資料集（最好是日系竿）
+#      之前，不得把它當定論。詳見 references/ccs_calibration.md §5-0。
 TAPER_POWER_INTERCEPT = 2.17
 TAPER_POWER_SLOPE = 2.92
 TAPER_POWER_MIN = 0.55
