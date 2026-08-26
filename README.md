@@ -146,8 +146,11 @@ skills/
 └── rod-curve-generator/
     ├── SKILL.md                          # 指令封裝與資料誠實守則
     ├── README.md                          # 雙模產圖的說明（本 skill 專屬）
+    ├── references/
+    │   └── ccs_calibration.md            # 彎曲形狀的答案卷（CCS 實測 21 支）與其限制
     └── scripts/
-        └── rod_curve_cli.py              # 分析報告 → JSON → 彎曲曲線 PNG
+        ├── rod_curve_cli.py              # 分析報告 → JSON → 彎曲曲線 PNG
+        └── validate_ccs.py               # 形狀回歸測試（改柔度定律必跑）
 ```
 
 `bin/install.js` 是**掃目錄自動發現** skill 的（認 `SKILL.md` 的存在），新增 skill 不必改安裝腳本。但 SKILL.md 裡呼叫腳本的路徑**必須寫成 `<skill_dir>/scripts/...`**——安裝時會被替換成絕對路徑，寫裸檔名的話注入到 Copilot／Cursor／Windsurf 後會找不到腳本。

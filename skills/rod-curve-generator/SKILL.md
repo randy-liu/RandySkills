@@ -96,7 +96,10 @@ uv run <skill_dir>/scripts/rod_curve_cli.py plot-zenaq --input <FILE.json> --out
 對比圖依「種類」分成 BAITCASTING / SPINNING 兩組。**報告裡沒有種類欄位的竿會被排除於對比圖之外**（腳本會以 `[WARN]` 點名），單竿的漸進圖仍照常產生。
 
 ### `plot-engineering`
-Reads the extracted JSON file and outputs horizontal Engineering-style PNG curves. These plots start horizontally (0 degrees), use a fixed load progression (100g, 250g, 500g, 1000g), and include a detailed specification info box in the lower-left corner.
+Reads the extracted JSON file and outputs horizontal Engineering-style PNG curves. These plots start horizontally (0 degrees) and include a detailed specification info box on the right.
+
+⚠️ 負載階梯**與 `plot-zenaq` 完全相同**（依該竿額定推演，見 `get_dynamic_load_list()`），兩張圖的差別**只在持竿角度**。
+→ 但**同一支竿同一負載，兩張圖的彎曲量本來就不會一樣，這不是 bug**：垂直負載的力臂是竿身的**水平投影**。水平持竿起始力臂是全長，越彎越短（自我煞車）；45 度上舉起始只有 0.707 倍全長，但越彎越長（自我放大）。兩者回授方向相反，所以差距隨負載變化、甚至會變號。**兩張圖不可互相對照數值。**
 ```bash
 uv run <skill_dir>/scripts/rod_curve_cli.py plot-engineering --input <FILE.json> --output-dir <DIR>
 ```
