@@ -201,3 +201,6 @@ references/<廠牌>_<系列>_features.md  # 該系列各型號的搭載技術與
 # 2. 重新部署
 node bin/install.js -g
 ```
+
+> 📌 `package.json` 的 `version` 刻意維持 `1.0.0`。目前只從 GitHub 安裝，`npx` 一律取預設分支的 HEAD，
+> version 不 gate 任何行為。日後要發佈到 npm registry 時再開始 bump。
