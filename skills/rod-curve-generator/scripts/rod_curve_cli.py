@@ -313,9 +313,27 @@ def derive_curve_parameters(tip_struct, butt_struct, taper_code, tip_dia_mm, but
     is_stiffened = (tip_struct or "") == "Tubular (Stiffened Tip)"
     excess = butt_excess or 0.0
 
+    # 🔴 **本圖畫的是「靜態受力形狀」，所以只有會改變靜態形狀的東西可以決定起彎點。**
+    #    原廠調性字母有時是由**動態效果**掙來的——竿身幾何明明是胴調，但因為回彈快、
+    #    不扭轉，摸起來像先調，原廠因而標 F。那種 F **不該拿來改靜態曲線**。
+    #
+    #    裁判是技術字典，不是我們的印象：
+    #      ・`3DX`  → 「形狀復原力」「竿先抖動迅速收斂、回彈極快」＝**動態**，不改變靜態彎曲形狀
+    #      ・`X45`  → 「防止扭轉變形」＝**抗扭**，不改變彎曲點位置
+    #      ・實心竿先 → 先徑做到 0.7mm＝**靜態幾何本身**，要算
+    #
+    # ⚠️ 目前解析得到的「純動態」技術只有 `3DX` 一項，故條件寫成 3DX。
+    #    日後若字典新增其他只影響動態的技術，應一併納入這個判斷。
+    fast_from_dynamics_only = (
+        taper_code in ("F", "X")
+        and taper_ratio < 7.0                      # 幾何本身讀出來是胴調（門檻同 calculate_taper.py）
+        and "3DX" in (butt_struct or "")
+        and "Excluded" not in (butt_struct or "")
+    )
+
     if is_solid:
         flex_point = 22.0 if tip_dia_mm <= 0.8 else (25.0 if tip_dia_mm <= 1.2 else 28.0)
-    elif taper_code in ("F", "X"):
+    elif taper_code in ("F", "X") and not fast_from_dynamics_only:
         # 🔴 `X`（Extra Fast）先前沒有分支，會一路掉到下面的 `taper_ratio >= 7.0 → 44.0`，
         #    也就是被畫得**比 F 還慢**——方向明顯錯了。
         # ⚠️ 但這裡刻意**不給 X 一個比 F 更快的值**：CCS 資料集裡只有 2 支 X-Fast
