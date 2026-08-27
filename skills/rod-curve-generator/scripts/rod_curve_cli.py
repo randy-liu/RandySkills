@@ -630,6 +630,34 @@ def sanitize_text(text):
 def get_rod_color(idx, total):
     return ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'][idx % 10]
 
+
+# 🔴 三種圖共用同一段聲明。**不要各寫各的**——同一件事在三張圖上講得不一樣，
+#    讀者會以為那是三件不同的事。
+#
+# 為什麼非印不可：這是一張**靜態掛重**的圖，而釣竿的手感有一半是動態的。
+# 依技術字典，`3DX` 買到的是「形狀復原力、回彈極快」、`X45` 買到的是「防止扭轉變形」
+# ——兩者都**不改變靜態掛重時的形狀**，所以靜態曲線在物理上就畫不出它們。
+# 沒有這句話，看圖的人會把「圖上比較慢」讀成「這支竿比較慢」，那是兩回事。
+#
+# ⚠️ **本字串不得使用 emoji。** 圖用的中文字型（微軟正黑體等）沒有 emoji 字符，
+#    matplotlib 會畫成豆腐方塊。報告的 Markdown 可以用，圖上不行。
+STATIC_ONLY_NOTE = (
+    "【本圖畫的是「靜態掛重的形狀」】彎在哪裡、彎多深。它畫不出回彈速度與抗扭"
+    "（3DX／X45 這類技術的貢獻）——那是動態特性，靜態掛重看不見。\n"
+    "所以實際手感可能比圖上「更快」，差額就在那裡；圖沒畫錯，是圖只負責形狀那一半。"
+    "　撓曲的絕對公分數屬推估值，可用於竿與竿相比，不得拿去對照實測。"
+)
+
+
+def add_static_note(fig, y=0.018):
+    """把靜態聲明印在圖的最下緣。三種圖都要呼叫。
+
+    🔴 呼叫前必須先替它空出下緣（`subplots_adjust(bottom=...)` 或 `tight_layout(rect=...)`），
+       否則會壓到 X 軸標題——已經發生過一次。
+    """
+    fig.text(0.012, y, STATIC_ONLY_NOTE, fontsize=7.5, color="#707070",
+             va="bottom", ha="left", linespacing=1.6)
+
 # ==========================================
 # ZENAQ STYLE PHYSICS & PLOTS
 # ==========================================
@@ -969,7 +997,10 @@ def plot_zenaq_comparison(rod_list, category_name, load_g, output_dir):
     ax.legend(loc="lower left", bbox_to_anchor=(1.05, 0.0), frameon=False, fontsize=12)
 
     out_path = os.path.join(output_dir, f"{category_name}_Comparison_{load_g}g.png")
-    plt.tight_layout()
+    # ⚠️ tight_layout 只重排 axes，不動 fig.text，所以聲明必須加在它之後，
+    #    否則版面重排時會被算進邊界、把圖擠掉。
+    plt.tight_layout(rect=(0, 0.055, 1, 1))   # 下緣留給 add_static_note()
+    add_static_note(fig)
     plt.savefig(out_path, dpi=300)
     plt.close(fig)
     print(f"[SUCCESS] Created {out_path}")
@@ -1036,7 +1067,8 @@ def plot_zenaq_progressive(rod, load_list, output_dir):
 
     out_path = os.path.join(output_dir, "Progressive_Curves", f"{model_name}_Progressive.png")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    plt.tight_layout()
+    plt.tight_layout(rect=(0, 0.055, 1, 1))   # 下緣留給 add_static_note()
+    add_static_note(fig)          # 必須在 tight_layout 之後，理由見對比圖那一處
     plt.savefig(out_path, dpi=300)
     plt.close(fig)
     print(f"[SUCCESS] Created {out_path}")
@@ -1133,7 +1165,8 @@ def plot_engineering_chart(rod_data, output_dir):
     fig, ax = plt.subplots(figsize=(15, 7), dpi=300)
     fig.patch.set_facecolor("white")
     ax.set_facecolor("#fcfcfc")
-    fig.subplots_adjust(left=0.06, right=0.66, top=0.88, bottom=0.10)
+    # bottom 由 0.10 加大到 0.17：下緣要同時容納 X 軸標題與 add_static_note() 的兩行聲明。
+    fig.subplots_adjust(left=0.06, right=0.66, top=0.88, bottom=0.17)
 
     handle_len = min(35.0, length_cm * 0.16)
     ax.axvspan(-2, handle_len, color="#e0e0e0", alpha=0.4, zorder=1, label="Grip / Reel Seat Zone")
@@ -1211,6 +1244,7 @@ def plot_engineering_chart(rod_data, output_dir):
 
     props = dict(boxstyle="round,pad=0.6", facecolor="#ffffff", edgecolor="#cccccc", alpha=0.92)
     fig.text(0.68, 0.55, info_text, fontsize=8.5, va="top", bbox=props, family="sans-serif")
+    add_static_note(fig)
 
     out_path = os.path.join(output_dir, "Engineering_Curves", f"{model_name}_Engineering.png")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
