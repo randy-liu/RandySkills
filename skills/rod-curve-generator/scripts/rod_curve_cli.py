@@ -639,7 +639,9 @@ def get_rod_color(idx, total):
 # ——兩者都**不改變靜態掛重時的形狀**，所以靜態曲線在物理上就畫不出它們。
 # 沒有這句話，看圖的人會把「圖上比較慢」讀成「這支竿比較慢」，那是兩回事。
 #
-# ⚠️ **本字串不得使用 emoji。** 圖用的中文字型（微軟正黑體等）沒有 emoji 字符，
+# 🔴 **任何要畫到圖上的字串都不得使用 emoji（不只本字串）。**
+#    這個坑已經踩過兩次：先是這段聲明的 ⚠️，後來是工程圖資訊框裡的 🟡。
+#    圖用的中文字型（微軟正黑體等）沒有 emoji 字符，
 #    matplotlib 會畫成豆腐方塊。報告的 Markdown 可以用，圖上不行。
 STATIC_ONLY_NOTE = (
     "【本圖畫的是「靜態掛重的形狀」】彎在哪裡、彎多深。它畫不出回彈速度與抗扭"
@@ -714,18 +716,51 @@ FORCE_STIFFNESS_EXPONENT = 0.45   # 🟡 純經驗補償，見下方說明
 #    但竿子在搏魚負載下確實會彎過 90 度，鉗在 82 度等於把過彎藏起來。
 MAX_TIP_ANGLE_DEG = 150.0
 
-# 搏魚負載（g）。這不是路亞重量，是「真的中魚時竿子被拉成什麼樣」的模擬點。
-# 🔴 固定值，不得依竿子強弱分級。原本寫成 >15g 跳 250、>40g 跳 500，
-#    結果是同一張圖上不同竿的極端值不一樣，彼此無法比較，而且中量級竿
-#    會拿到 12 倍額定的荷重，畫出來是一個沒有意義的圈。
-FIGHT_LOAD_G = 100.0
+# 搏魚負載：由「適合ライン」推導，不是固定克數。
+#
+# 🔴 **竿子承受的持續拉力上限，由洩力決定，不由魚的大小決定。**
+#    洩力是捲線器上的拉力上限開關——張力一超過設定值，線就被放出去，張力停在那裡。
+#    所以不管魚多大、衝多猛，竿子感受到的持續拉力最多就是洩力值。
+#
+# 推導鏈：① 洩力不可能設得比線的破斷強度高（線會先斷，那是設計上的弱點）
+#         ② 實務慣例是設在破斷強度的 1/3（留餘裕給打結損失、瞬間衝擊、線的磨損）
+#         ③ 「適合ライン」是官方規格，就在規格表裡
+#         → 搏魚負載 = 適合ライン上限(lb) × 453.6 × 1/3
+#
+# 🟡 **1/3 是釣魚圈慣例，不是原廠規格。** 改這個值會改變全部的搏魚曲線。
+#
+# ⚠️ **不得改用「線破斷強度」本身。** 實測過：那個負載下有 4 支竿會撞上
+#    MAX_TIP_ANGLE_DEG 的鉗制，撓曲百分比反而變小（竿子被算成捲一個圈）。
+#    那是模型失效，不是物理。能畫的上限就是洩力負載。
+#
+# ⚠️ 舊版是固定的 `FIGHT_LOAD_G = 100.0`。它的問題是同一個絕對數字對不同力量的竿
+#    意義完全不同——實測 100g 之下，H 竿只彎 10%（竿尖 23°）、UL 竿彎 24%（竿尖 64°）。
+#    改用洩力推導之後，12 支竿全部落在竿尖 87〜90°，也就是竿尖指向正下方的那個
+#    經典搏魚弧——因為原廠本來就是把適合ライン配著竿子的力量一起訂的。
+DRAG_FRACTION = 1.0 / 3.0
+LB_TO_G = 453.592
 
-# 跨竿對比圖的負載（g）。
-# 🔴 這裡**必須**用絕對克數，不能像單竿圖那樣依額定推演——對比圖的意義
-#    就是「同一個重量掛上去，各支竿分別彎成什麼樣」。每支竿用自己的額定
-#    倍率就等於各畫各的，疊在一張圖上不能比較。
-#    50g ＝ 中量級竿的工作區間上緣、輕竿的明顯超載；100g ＝ 搏魚基準。
-COMPARISON_LOADS_G = (50, 100)
+# 適合ライン欄位解析不到 lb 標示時的退回值（僅標 PE 号的竿）。
+# 🔴 用到它時**必須在圖上標明**這是退回值，不是由該竿的線規推導出來的。
+FIGHT_LOAD_FALLBACK_G = 100.0
+
+
+# 跨竿對比圖的負載：**每支竿用自己的基準**，不是同一個絕對克數。
+#
+# 🔴 舊版用固定的 50g／100g，理由是「同一個重量掛上去才能比較」。那個理由錯了：
+#    對比圖裡混著 L 到 H，**跨力量級距用同一個絕對負載本質上就不公平**——
+#    選一個對 UL 有意義的重量，H 竿幾乎不動；選一個對 H 有意義的，UL 早就斷線了。
+#    而且結果只是在重述型號上的力量字母（H 比 UL 硬），看規格表就知道，圖沒有多說什麼。
+#
+# 改成各自基準之後，**力量被除掉了，剩下的是調性**——誰的彎集中在竿尖、誰整支參與。
+# 那才是規格表看不出來、而本 skill 真正知道的東西。
+#   ・"rated" → 各自的額定上限（操餌時的工作點）
+#   ・"fight" → 各自的洩力上限（搏魚時的極限）
+#
+# ⚠️ 代價要講清楚：這張圖**不再回答「同一條魚上不同竿誰比較吃力」**。
+#    但那個問題本來也答得不好——沒有人會拿 UL 竿和 H 竿去釣同一條魚。
+COMPARISON_MODES = ("shape", "fight")
+
 
 # 額定區間內的取樣段數。取樣以**等比**分佈於「路亞負載下限 → 上限」之間，
 # 例如 5〜21g 得到 5／6.7／8.9／11.8／15.8／21。
@@ -932,7 +967,32 @@ def calculate_bending_curve_45deg(rod_data, load_g, num_points=300):
     )
 
 
-def get_dynamic_load_list(lure_str):
+LINE_LB_PAT = re.compile("([0-9.]+)\s*[〜～~-]\s*([0-9.]+)\s*lb")
+LINE_LB_SINGLE_PAT = re.compile("([0-9.]+)\s*lb")
+
+
+def drag_load_g(line_rating):
+    """由「適合ライン」推導搏魚時的線張力上限（克）。
+
+    回傳 (克數, 來源說明)。解析不到 lb 標示時回傳退回值，說明字串會講明它是退回值——
+    🔴 那個說明必須印在圖上，不可以讓讀者以為這個數字是由該竿的線規推導出來的。
+    """
+    s = line_rating or ""
+    m = LINE_LB_PAT.search(s) or LINE_LB_SINGLE_PAT.search(s)
+    if not m:
+        return FIGHT_LOAD_FALLBACK_G, "退回固定值（該竿無 lb 標示）"
+    lb = float(m.group(2) if m.lastindex and m.lastindex >= 2 else m.group(1))
+    return lb * LB_TO_G * DRAG_FRACTION, "適合ライン上限 {:g} lb × 1/3".format(lb)
+
+
+def fmt_load(load_g):
+    """負載標籤。搏魚量級用 kg 比較好讀，餌重量級維持 g。"""
+    if load_g >= 500:
+        return "{:.1f}kg".format(load_g / 1000.0)
+    return "{:g}g".format(round(load_g, 1))
+
+
+def get_dynamic_load_list(lure_str, line_str=None):
     """依該竿的額定負載上限推演階梯，最後補一個固定的搏魚極端值。
 
     負載區間必須跟著竿子走——0.6〜5g 的 UL 竿與 11〜28g 的 H 竿，
@@ -952,26 +1012,72 @@ def get_dynamic_load_list(lure_str):
     # 額定上限之上再加一個超額點。上限本身保留，因為那是對齊原廠建議的錨點。
     loads.append(round(max_lure * LOAD_OVERLOAD_RATIO, 1))
 
-    # 搏魚值只在它真的高於額定上限時才有意義——對額定 120g 的竿來說，100g
-    # 落在工作範圍內，不是什麼極端負載。
-    # 🔴 不得用 `x < FIGHT_LOAD_G` 過濾整個階梯：那會把額定上限本身砍掉
-    #    （額定 60〜120g 的竿，120 與超額點 138 都會消失）。
-    if FIGHT_LOAD_G > max_lure:
-        loads.append(FIGHT_LOAD_G)
+    # 搏魚值只在它真的高於額定上限時才有意義。
+    # 🔴 不得用 `x < fight` 過濾整個階梯：那會把額定上限本身砍掉。
+    fight_g = drag_load_g(line_str)[0]
+    if fight_g > max_lure:
+        loads.append(round(fight_g, 1))
 
     loads = sorted(set(loads))
     return [int(x) if x == int(x) else x for x in loads]
 
 
-def load_role(load_g, max_lure):
+def load_role(load_g, max_lure, fight_g=None):
     """這個負載在圖上的角色：額定內／超額／搏魚。決定顏色、線型與標籤。"""
-    if load_g == FIGHT_LOAD_G:
+    if fight_g is not None and abs(load_g - round(fight_g, 1)) < 0.05:
         return "fight"
     if max_lure is not None and load_g > max_lure:
         return "overload"
     return "rated"
 
-def plot_zenaq_comparison(rod_list, category_name, load_g, output_dir):
+MODE_TITLE = {
+    "shape": ("彎到\n同一深度",
+              "每支竿都加載到「竿尖下沉\n全長 1/3」為止。\n深度統一了，剩下的差異\n純粹是形狀。\n\n圖例的克數＝各自\n需要的力量。"),
+    "fight": ("各自的\n洩力上限",
+              "每支竿掛自己的洩力上限\n（適合ライン × 1/3）。\n\n這是搏魚極限下的形狀——\n洩力才是竿子承受的\n拉力上限，不是魚的大小。"),
+}
+
+
+def load_for_deflection(rod, target_frac=1.0 / 3.0):
+    """二分搜尋出「讓竿尖下沉 target_frac × 全長」所需的負載（克）。
+
+    🔴 這正是 CCS 的 Intrinsic Power 定義，也是 validate_ccs.py 用來考引擎的那個量。
+       對比圖用它，是為了讓每支竿在**同一個彎曲深度**下比形狀——深度一樣，
+       剩下的差異就純粹是調性，力量被完全除掉。
+    """
+    length_cm = parse_length_cm(rod["basic_specifications"].get("Length"))
+    k_power = require_spec(rod["curve_plotting_parameters"], "power_stiffness_factor")
+    compliance = rod_compliance(rod)
+    target = length_cm * target_frac
+    lo, hi = 0.01, 1e9
+    # 🔴 一律用**水平持竿**來找這個負載，即使圖是 45 度的。
+    #    理由有二：① 這樣才跟 CCS 的定義、跟 validate_ccs.py 用的是同一把尺；
+    #             ② 45 度圖的竿尖本來就朝上，Y 的高低差不等於「下沉量」——
+    #                照那樣量會在極小負載就誤判達標，畫出一堆「需 0g」的直線。
+    #                （這個 bug 真的發生過，別再用 START_ANGLE_45 量深度。）
+    for _ in range(26):
+        mid = math.sqrt(lo * hi)
+        _, Y = solve_bending(length_cm, compliance, k_power, mid,
+                             START_ANGLE_HORIZONTAL, num_points=300)
+        lo, hi = (mid, hi) if abs(float(Y[-1])) < target else (lo, mid)
+    return hi
+
+
+def comparison_load(rod, mode):
+    """這支竿在該模式下的負載。回傳 (克數, 標籤) 或 (None, 原因)。"""
+    s = rod.get("basic_specifications", {})
+    if mode == "fight":
+        g, _src = drag_load_g(s.get("Line_Rating"))
+        return g, fmt_load(g)
+    if mode == "shape":
+        return load_for_deflection(rod), None      # 標籤稍後補，需要知道力量
+    _, mx = parse_lure_range_g(s.get("Lure_Rating"))
+    if mx is None or mx <= 0:
+        return None, "無額定上限"
+    return mx, fmt_load(mx)
+
+
+def plot_zenaq_comparison(rod_list, category_name, mode, output_dir):
     fig, ax = plt.subplots(figsize=(12, 8), dpi=300)
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
@@ -987,8 +1093,17 @@ def plot_zenaq_comparison(rod_list, category_name, load_g, output_dir):
     bounds = [0.0, 0.0, 0.0, 0.0]  # min_x, max_x, min_y, max_y
     for idx, rod in enumerate(rod_list):
         model_name, color = rod["model_name"], get_rod_color(idx, len(rod_list))
+        load_g, load_label = comparison_load(rod, mode)
+        if load_g is not None and load_label is None:
+            load_label = "需 " + fmt_load(load_g)
+        if load_g is None:
+            print(f"[WARN] {model_name} {load_label}，已排除於「{mode}」對比圖之外。",
+                  file=sys.stderr)
+            continue
+        # 🔴 每支竿的負載不同，所以圖例**必須**帶上各自的克數——
+        #    否則讀者會以為這張圖跟舊版一樣是同一個重量。
         X, Y = calculate_bending_curve_45deg(rod, load_g)
-        ax.plot(X, Y, label=model_name, color=color, linewidth=2.0, zorder=4)
+        ax.plot(X, Y, label=f"{model_name}  {load_label}", color=color, linewidth=2.0, zorder=4)
         bounds = [min(bounds[0], float(np.min(X))), max(bounds[1], float(np.max(X))),
                   min(bounds[2], float(np.min(Y))), max(bounds[3], float(np.max(Y)))]
 
@@ -1002,7 +1117,11 @@ def plot_zenaq_comparison(rod_list, category_name, load_g, output_dir):
 
     # Load Box in the right margin
     props = dict(boxstyle="square,pad=0.5", facecolor="black", edgecolor="black")
-    fig.text(0.87, 0.85, f"Load\n{load_g}\ngram", fontsize=16, color="white", fontweight='bold', ha='center', va='top', bbox=props)
+    _mt, _msub = MODE_TITLE[mode]
+    fig.text(0.87, 0.86, _mt, fontsize=15, color="white", fontweight='bold',
+             ha='center', va='top', bbox=props)
+    fig.text(0.87, 0.70, _msub, fontsize=8.5, color="#555555", ha='center', va='top',
+             linespacing=1.9)
 
     # 🔴 範圍必須涵蓋所有畫出來的幾何。原本只追蹤 min_x 與 max_y，
     #    重負載下竿子彎過垂直、曲線往下走，就會被裁掉一整段（看起來像算錯）。
@@ -1016,7 +1135,7 @@ def plot_zenaq_comparison(rod_list, category_name, load_g, output_dir):
     # Legend safely anchored outside the plot area
     ax.legend(loc="lower left", bbox_to_anchor=(1.05, 0.0), frameon=False, fontsize=12)
 
-    out_path = os.path.join(output_dir, f"{category_name}_Comparison_{load_g}g.png")
+    out_path = os.path.join(output_dir, f"{category_name}_Comparison_{mode}.png")
     # ⚠️ tight_layout 只重排 axes，不動 fig.text，所以聲明必須加在它之後，
     #    否則版面重排時會被算進邊界、把圖擠掉。
     plt.tight_layout(rect=(0, 0.055, 1, 1))   # 下緣留給 add_static_note()
@@ -1042,12 +1161,17 @@ def plot_zenaq_progressive(rod, load_list, output_dir):
     cmap = plt.get_cmap("rainbow")
     # 標籤與工程圖一致：額定內只寫克數，超出額定與搏魚要點名，
     # 否則讀者看不出哪一條已經超過原廠建議負載。
-    _, max_lure = parse_lure_range_g(rod.get("basic_specifications", {}).get("Lure_Rating"))
+    _specs = rod.get("basic_specifications", {})
+    _, max_lure = parse_lure_range_g(_specs.get("Lure_Rating"))
+    fight_g, _fight_src = drag_load_g(_specs.get("Line_Rating"))
     bounds = [0.0, 0.0, 0.0, 0.0]  # min_x, max_x, min_y, max_y
     for i, load_g in enumerate(load_list):
         color = cmap(i / max(1, len(load_list)-1))
-        role = load_role(load_g, max_lure)
-        label = {"fight": "搏魚 {:g}g", "overload": "超額 {:g}g"}.get(role, "{:g}g").format(load_g)
+        role = load_role(load_g, max_lure, fight_g)
+        # 🔴 搏魚那條標「線張力」而不只是數字：它跟上面那些「餌重」單位相同但意義不同，
+        #    不講明的話會被讀成「這支竿可以掛 3 公斤的餌」。
+        label = {"fight": "搏魚｜線張力 " + fmt_load(load_g),
+                 "overload": "超額 " + fmt_load(load_g)}.get(role, fmt_load(load_g))
         X, Y = calculate_bending_curve_45deg(rod, load_g)
         ax.plot(X, Y, label=label, color=color, linewidth=2.0, zorder=4)
         ax.scatter([X[-1]], [Y[-1]], color=color, s=20, zorder=5)
@@ -1117,12 +1241,14 @@ def do_plot_zenaq(json_file, output_dir):
         if not rods:
             print(f"[WARN] 沒有 {name} 類型的釣竿，略過該對比圖。", file=sys.stderr)
             continue
-        for load_g in COMPARISON_LOADS_G:
-            plot_zenaq_comparison(rods, name, load_g, output_dir)
+        for mode in COMPARISON_MODES:
+            plot_zenaq_comparison(rods, name, mode, output_dir)
 
     for rod in rod_dataset:
-        lure_str = rod.get("basic_specifications", {}).get("Lure_Rating")
-        plot_zenaq_progressive(rod, get_dynamic_load_list(lure_str), output_dir)
+        _s = rod.get("basic_specifications", {})
+        plot_zenaq_progressive(
+            rod, get_dynamic_load_list(_s.get("Lure_Rating"), _s.get("Line_Rating")),
+            output_dir)
 
     print("[SUCCESS] All ZENAQ-style plots generated successfully!")
 
@@ -1165,52 +1291,73 @@ def plot_engineering_chart(rod_data, output_dir):
     #    原本固定 100/250/500/1000g，套在 702UL+FS-ST23（額定 0.6〜5g）上
     #    就是 20×／50×／100×／200× 額定——那不是彎曲曲線，是把竿子折斷的模擬。
     #    與 progressive 圖共用同一組階梯：兩種圖只差在持竿角度，負載定義必須一致。
-    ladder = get_dynamic_load_list(specs.get("Lure_Rating"))
+    ladder = get_dynamic_load_list(specs.get("Lure_Rating"), specs.get("Line_Rating"))
     _, max_lure = parse_lure_range_g(specs.get("Lure_Rating"))
+    fight_g, fight_src = drag_load_g(specs.get("Line_Rating"))
     cmap = plt.get_cmap("viridis")
-    rated = [x for x in ladder if load_role(x, max_lure) == "rated"]
+    rated = [x for x in ladder if load_role(x, max_lure, fight_g) == "rated"]
     loads = []
     for load_g in ladder:
-        role = load_role(load_g, max_lure)
+        role = load_role(load_g, max_lure, fight_g)
         if role == "fight":
-            loads.append((load_g, "搏魚 ({:g}g)".format(load_g), "#d62728", "-", 2.8))
+            loads.append((load_g, "搏魚｜線張力 " + fmt_load(load_g), "#d62728", "-", 2.8))
         elif role == "overload":
-            loads.append((load_g, "超額 ({:g}g)".format(load_g), "#ff7f0e", "--", 2.2))
+            loads.append((load_g, "超額 " + fmt_load(load_g), "#ff7f0e", "--", 2.2))
         else:
             shade = cmap(0.12 + 0.62 * rated.index(load_g) / max(1, len(rated) - 1))
-            loads.append((load_g, "{:g}g".format(load_g), shade, "-", 1.8))
+            loads.append((load_g, fmt_load(load_g), shade, "-", 1.8))
 
     # 圖表區退到左側，右側留一整欄放圖例與資訊——與 ZENAQ 兩種圖的版面一致。
     # 原本圖例壓在座標軸右上角，會蓋住輕負載曲線的尾段。
-    fig, ax = plt.subplots(figsize=(15, 7), dpi=300)
+    # 🔴 **上下兩個面板，共用 X 軸。**
+    #    額定區（幾公分）與搏魚（一公尺以上）差了一到兩個數量級，畫在同一個 y 軸上，
+    #    額定區會被壓成頂端一條線——而那正是釣手每天在用的區間。
+    #    拆開之後不動任何物理、不丟任何資訊，只是把兩個在回答不同問題的東西分開放：
+    #      上＝操餌時什麼感覺　　下＝搏魚時什麼樣子
+    fig, (ax_top, ax_bot) = plt.subplots(
+        2, 1, figsize=(15, 8.6), dpi=300, sharex=True,
+        gridspec_kw={"height_ratios": [1.0, 1.0], "hspace": 0.16})
     fig.patch.set_facecolor("white")
-    ax.set_facecolor("#fcfcfc")
-    # bottom 由 0.10 加大到 0.17：下緣要同時容納 X 軸標題與 add_static_note() 的兩行聲明。
-    fig.subplots_adjust(left=0.06, right=0.66, top=0.88, bottom=0.17)
+    # bottom 需同時容納 X 軸標題與 add_static_note() 的兩行聲明。
+    fig.subplots_adjust(left=0.06, right=0.66, top=0.90, bottom=0.145)
 
     handle_len = min(35.0, length_cm * 0.16)
-    ax.axvspan(-2, handle_len, color="#e0e0e0", alpha=0.4, zorder=1, label="Grip / Reel Seat Zone")
-    ax.plot([0, handle_len], [0, 0], color="#555555", linewidth=5, zorder=2)
-    ax.plot([0, length_cm], [0, 0], color="#888888", linestyle=":", linewidth=1.5, label="Unloaded Rod Baseline", zorder=3)
+    fight_curves = [c for c in loads if load_role(c[0], max_lure, fight_g) == "fight"]
+    work_curves = [c for c in loads if load_role(c[0], max_lure, fight_g) != "fight"]
 
-    min_y = 0.0
-    for load_g, label_text, color_code, line_style, line_width in loads:
-        X, Y = calculate_bending_curve_horizontal(rod_data, load_g)
-        ax.plot(X, Y, label=label_text, color=color_code, linestyle=line_style, linewidth=line_width, zorder=4)
-        ax.scatter(X[-1], Y[-1], color=color_code, s=40, zorder=5)
-        min_y = min(min_y, float(np.min(Y)))
+    panels = [
+        (ax_top, work_curves, "額定區間（操餌）"),
+        (ax_bot, fight_curves, "搏魚（洩力上限）"),
+    ]
+    for ax, curves, panel_title in panels:
+        ax.set_facecolor("#fcfcfc")
+        ax.axvspan(-2, handle_len, color="#e0e0e0", alpha=0.4, zorder=1,
+                   label="Grip / Reel Seat Zone" if ax is ax_top else None)
+        ax.plot([0, handle_len], [0, 0], color="#555555", linewidth=5, zorder=2)
+        ax.plot([0, length_cm], [0, 0], color="#888888", linestyle=":", linewidth=1.5,
+                label="Unloaded Rod Baseline" if ax is ax_top else None, zorder=3)
+        min_y = 0.0
+        for load_g, label_text, color_code, line_style, line_width in curves:
+            X, Y = calculate_bending_curve_horizontal(rod_data, load_g)
+            ax.plot(X, Y, label=label_text, color=color_code, linestyle=line_style,
+                    linewidth=line_width, zorder=4)
+            ax.scatter(X[-1], Y[-1], color=color_code, s=40, zorder=5)
+            min_y = min(min_y, float(np.min(Y)))
+        ax.grid(True, linestyle="--", alpha=0.5, color="#bbbbbb")
+        ax.set_xlim(-5, length_cm + 10)
+        # 🔴 每個面板各自縮放 y。兩個面板的 y 刻度**不同**，所以不可以隔空目測比長度——
+        #    面板標題已標明各自的範圍。
+        ax.set_ylim(min_y * 1.18 if min_y < 0 else -1.0, max(1.0, -min_y * 0.12))
+        ax.set_ylabel("Deflection (cm)", fontsize=9.5, fontweight="bold", labelpad=6)
+        ax.set_title(panel_title, fontsize=10, color="#444444", loc="left", pad=4)
 
-    ax.set_xlabel("Horizontal Position from Butt (cm)", fontsize=11, fontweight="bold", labelpad=8)
-    ax.set_ylabel("Vertical Deflection (cm)", fontsize=11, fontweight="bold", labelpad=8)
-    
+    ax_bot.set_xlabel("Horizontal Position from Butt (cm)", fontsize=11,
+                      fontweight="bold", labelpad=8)
+
     # 🔴 同上：不得寫死 "DAIWA Heartland"。型號字串本身就足以識別這支竿。
     title_str = f"{model_name}{category_suffix} - Load Bending Curves"
     subtitle_str = f"Official Taper: {official_taper} | Tip: {tip_struct} | Calc Action: {calc_action}"
-    ax.set_title(f"{title_str}\n{subtitle_str}", fontsize=12, fontweight="bold", pad=12)
-
-    ax.grid(True, linestyle="--", alpha=0.5, color="#bbbbbb")
-    ax.set_xlim(-5, length_cm + 10)
-    ax.set_ylim(min_y * 1.18, max(10, -min_y * 0.15))
+    fig.suptitle(f"{title_str}\n{subtitle_str}", fontsize=12, fontweight="bold", y=0.985)
 
     ratio_source = specs.get("Taper_Ratio_Source")
     ratio_note = "（{}）".format(ratio_source) if ratio_source else ""
@@ -1226,6 +1373,13 @@ def plot_engineering_chart(rod_data, output_dir):
             show_or_missing(taper_info.get("Butt_Excess_Index"))),
         "- Lure: {}".format(show_or_missing(specs.get("Lure_Rating"))),
         "- Line: {}".format(show_or_missing(specs.get("Line_Rating"))),
+        "",
+        # 🔴 搏魚負載是推導出來的，推導鏈必須印在圖上——讀者要看得出哪一步是慣例。
+        "[搏魚負載] 線張力 {}".format(fmt_load(fight_g)),
+        "- 推導：{}".format(fight_src),
+        "- 註：1/3 是釣魚圈慣例，非原廠規格",
+        "- 竿子承受的持續拉力上限由洩力決定，",
+        "  不由魚的大小決定",
         "",
         # 🟡 這一區塊是本腳本的繪圖參數，不是原廠數據——標題就要講明，
         #    否則看圖的人會把它當成規格表的一部分。
@@ -1256,14 +1410,17 @@ def plot_engineering_chart(rod_data, output_dir):
     # 原廠建議負載獨立標出來，讀者才分得出哪幾條在額定內、哪一條超額、哪一條搏魚。
     # 座標軸頂端在 figure 的 0.88，所以這一行要放在其上方才不會壓到圖例；
     # 主標題置中於左側圖表區，右欄在這個高度是空的。
-    fig.text(0.68, 0.935, "額定負載 {}".format(show_or_missing(specs.get("Lure_Rating"))),
+    fig.text(0.68, 0.905, "額定負載 {}".format(show_or_missing(specs.get("Lure_Rating"))),
              fontsize=11, fontweight="bold", color="#333333", va="top", family="sans-serif")
 
-    ax.legend(loc="upper left", bbox_to_anchor=(1.03, 1.0), frameon=False,
-              fontsize=9.5, borderaxespad=0.0)
+    # 兩個面板的曲線合成一份圖例——分成兩份會讓讀者以為那是兩組不同的東西。
+    _h, _l = ax_top.get_legend_handles_labels()
+    _h2, _l2 = ax_bot.get_legend_handles_labels()
+    ax_top.legend(_h + _h2, _l + _l2, loc="upper left", bbox_to_anchor=(1.03, 1.0),
+                  frameon=False, fontsize=9.5, borderaxespad=0.0)
 
     props = dict(boxstyle="round,pad=0.6", facecolor="#ffffff", edgecolor="#cccccc", alpha=0.92)
-    fig.text(0.68, 0.55, info_text, fontsize=8.5, va="top", bbox=props, family="sans-serif")
+    fig.text(0.68, 0.52, info_text, fontsize=8.5, va="top", bbox=props, family="sans-serif")
     add_static_note(fig)
 
     out_path = os.path.join(output_dir, "Engineering_Curves", f"{model_name}_Engineering.png")
