@@ -1325,6 +1325,14 @@ def plot_engineering_chart(rod_data, output_dir):
     fight_curves = [c for c in loads if load_role(c[0], max_lure, fight_g) == "fight"]
     work_curves = [c for c in loads if load_role(c[0], max_lure, fight_g) != "fight"]
 
+    # 🔴 **每條曲線的圖例都要帶「竿尖下沉佔全長多少 %」。**
+    #    這兩個面板的 y 軸是放大的（見下方 panel_title 的倍率標示），視覺上很容易把
+    #    額定區的 2.7% 讀成 27%。百分比是唯一不受座標軸縮放影響的講法。
+    tip_pct = {}
+    for load_g, _lab, _c, _ls, _lw in loads:
+        _X, _Y = calculate_bending_curve_horizontal(rod_data, load_g)
+        tip_pct[load_g] = abs(float(_Y[-1])) / length_cm * 100.0
+
     panels = [
         (ax_top, work_curves, "額定區間（操餌）"),
         (ax_bot, fight_curves, "搏魚（洩力上限）"),
@@ -1339,7 +1347,8 @@ def plot_engineering_chart(rod_data, output_dir):
         min_y = 0.0
         for load_g, label_text, color_code, line_style, line_width in curves:
             X, Y = calculate_bending_curve_horizontal(rod_data, load_g)
-            ax.plot(X, Y, label=label_text, color=color_code, linestyle=line_style,
+            ax.plot(X, Y, label="{}  ({:.1f}% 全長)".format(label_text, tip_pct[load_g]),
+                    color=color_code, linestyle=line_style,
                     linewidth=line_width, zorder=4)
             ax.scatter(X[-1], Y[-1], color=color_code, s=40, zorder=5)
             min_y = min(min_y, float(np.min(Y)))
@@ -1349,7 +1358,24 @@ def plot_engineering_chart(rod_data, output_dir):
         #    面板標題已標明各自的範圍。
         ax.set_ylim(min_y * 1.18 if min_y < 0 else -1.0, max(1.0, -min_y * 0.12))
         ax.set_ylabel("Deflection (cm)", fontsize=9.5, fontweight="bold", labelpad=6)
-        ax.set_title(panel_title, fontsize=10, color="#444444", loc="left", pad=4)
+        # 🔴 **垂直放大倍率必須印出來。**
+        #    y 軸縮放到只有幾公分、x 軸卻是整支竿的長度，畫框又是扁的——不標的話，
+        #    額定上限那 2.7% 的撓曲會被看成竿子已經彎得很深，讀者會得到
+        #    「這支竿在工作負載下就把彈力耗光、投不遠」這個完全相反的結論。
+        _box = ax.get_position()
+        _xr = (length_cm + 15.0)
+        _yr = abs(ax.get_ylim()[1] - ax.get_ylim()[0])
+        _exag = (_xr / _yr) / ((_box.width * 15.0) / (_box.height * 8.6))
+        # 搏魚面板的 y 範圍本來就大，往往是**壓縮**而非放大——兩種情況都要照實講，
+        # 印成「放大 ≈0×」只會讓人以為程式壞了。
+        if _exag >= 1.5:
+            _note = "垂直放大 ≈{:.0f}×（實際彎曲遠比看起來平緩）".format(_exag)
+        elif _exag <= 0.7:
+            _note = "垂直壓縮 ≈{:.1f}×（實際彎曲比看起來更深）".format(_exag)
+        else:
+            _note = "接近等比例"
+        ax.set_title("{}　　{}".format(panel_title, _note),
+                     fontsize=9.5, color="#444444", loc="left", pad=4)
 
     ax_bot.set_xlabel("Horizontal Position from Butt (cm)", fontsize=11,
                       fontweight="bold", labelpad=8)
@@ -1410,9 +1436,6 @@ def plot_engineering_chart(rod_data, output_dir):
     # 原廠建議負載獨立標出來，讀者才分得出哪幾條在額定內、哪一條超額、哪一條搏魚。
     # 座標軸頂端在 figure 的 0.88，所以這一行要放在其上方才不會壓到圖例；
     # 主標題置中於左側圖表區，右欄在這個高度是空的。
-    fig.text(0.68, 0.905, "額定負載 {}".format(show_or_missing(specs.get("Lure_Rating"))),
-             fontsize=11, fontweight="bold", color="#333333", va="top", family="sans-serif")
-
     # 兩個面板的曲線合成一份圖例——分成兩份會讓讀者以為那是兩組不同的東西。
     _h, _l = ax_top.get_legend_handles_labels()
     _h2, _l2 = ax_bot.get_legend_handles_labels()
