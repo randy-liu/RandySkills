@@ -132,12 +132,29 @@ Heartland 規格表的完整欄位為：`全長／継数／ジョイント仕様
 ### 機能技術 (Features)
 位於型號後綴（破折號 `-` 之後）。
 
-| 編碼 | 判讀 | 對應技術字典條目 |
-|---|---|---|
-| `SV` | SVF Compile-X | `SVF COMPILE-X` |
-| `AGS` | Air Guide System | `AGS (Air Guide System)` |
-| `SMT` | Super Metal Top | `SMT（SuperMetalTop）` |
-| `ST` | Solid Tip | （觸發 Step 3；**竿先之具體技術需另行確認**，見下方注意） |
+| 編碼 | 判讀 | 可信度 | 對應技術字典條目 |
+|---|---|---|---|
+| `SV` | SVF Compile-X | 🟡 回推（見下） | `SVF COMPILE-X` |
+| `AGS` | Air Guide System | 🟡 回推（見下） | `AGS (Air Guide System)` |
+| `SMT` | Super Metal Top | 🟢 官方 key ⑥ 明列 | `SMT（SuperMetalTop）` |
+| `ST` | Solid Tip | 🟢 官方 key ⑥ 明列 | （觸發 Step 3；**竿先之具體技術需另行確認**，見下方注意） |
+
+⚠️ **`SV` 與 `AGS` 的可信度與另外兩碼不同，不可混為一談。**
+
+**技術本身是 🟢**：`SVF COMPILE-X` 與 `AGS (Air Guide System)` 都是 DAIWA 正式技術，技術字典有正式條目。
+**但「型號後綴 = 該技術」這個對應關係是 🟡 回推**——官方 key ⑥ 只列了 `SMT`／`ST`／`FR`／`SB`，
+沒有收這兩碼；官方產品頁也只是列出技術，**沒有任何一處說明「型號裡的 SV 代表 SVF」**。
+
+**回推依據** 🟡：官方「ハートランド AGS」產品頁（<https://www.daiwa.com/jp/product/8hqy3jm>）
+上的 **4 支型號全部帶 `-SV AGS` 後綴**（`722MRB-SV AGS25`、`741MHRB-SV AGS17`、
+`751HRB-SV AGS19`、`832MSB-SV AGS21`），而**同一頁的技術清單中同時列有 `SVF COMPILE-X` 與 `AGS`**。
+→ **4/4 共現，無反例。** 查證日 2026-09-01。
+
+**證偽判準**：若出現帶 `-SV` 的型號、其官方技術清單卻**不含** `SVF COMPILE-X`（或帶 `-AGS`
+卻不含 `AGS`），本對應即被推翻。
+
+⚠️ 上列 4 支屬**ハートランド AGS**（與本檔常引用的 12 支ハートランド分屬不同產品頁），
+此處僅作**回推樣本**登錄，依 §0 不得作為任何竿款的比較對象。
 
 ⚠️ **`-ST` 的重要限制**：`-ST` 僅宣告「實心竿先」這個**結構事實**，**不等於宣告採用何種竿先技術**。字典中 `MEGA TOP`（實心碳纖維）與 `SMT`（鈦合金）物理特性差異極大（後者在 5℃ 以下會變軟）。若官方文案未指名，**不得臆測屬於何者**。
 
