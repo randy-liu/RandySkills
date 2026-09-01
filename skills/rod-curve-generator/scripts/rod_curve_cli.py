@@ -716,27 +716,29 @@ FORCE_STIFFNESS_EXPONENT = 0.45   # 🟡 純經驗補償，見下方說明
 #    但竿子在搏魚負載下確實會彎過 90 度，鉗在 82 度等於把過彎藏起來。
 MAX_TIP_ANGLE_DEG = 150.0
 
-# 搏魚負載：由「適合ライン」推導，不是固定克數。
+# 深彎負載：畫到「竿尖下沉 1/3 全長」為止，**不是**畫到洩力上限。
 #
-# 🔴 **竿子承受的持續拉力上限，由洩力決定，不由魚的大小決定。**
-#    洩力是捲線器上的拉力上限開關——張力一超過設定值，線就被放出去，張力停在那裡。
-#    所以不管魚多大、衝多猛，竿子感受到的持續拉力最多就是洩力值。
+# 🔴 **為什麼不畫洩力上限——那是本 skill 最容易被誤解的一個決定，理由要看完。**
 #
-# 推導鏈：① 洩力不可能設得比線的破斷強度高（線會先斷，那是設計上的弱點）
-#         ② 實務慣例是設在破斷強度的 1/3（留餘裕給打結損失、瞬間衝擊、線的磨損）
-#         ③ 「適合ライン」是官方規格，就在規格表裡
-#         → 搏魚負載 = 適合ライン上限(lb) × 453.6 × 1/3
+# 洩力確實是竿子承受的持續拉力上限（張力一超過設定值，線就被放出去），而它可由
+# 「適合ライン上限 × 1/3」推導。那個數字仍然會印在圖上（見 drag_load_g）。
+# **但那個負載畫不出可信的形狀**，實測三項：
 #
-# 🟡 **1/3 是釣魚圈慣例，不是原廠規格。** 改這個值會改變全部的搏魚曲線。
+#   ① **形狀退化**：洩力負載把 12 支推到撓曲 45〜71% 全長。等比例畫出來是
+#      「前段直 → 急彎 → 尾段垂直」的 J 形，不是釣竿該有的連續弧。
+#   ② **鑑別力消失**：竿尖角在 ~90° 飽和。撓曲 33% 時 12 支的竿尖角分佈在
+#      59.0〜84.4°（差 25°）；到 55% 只剩 83.1〜90.0°（差 7°）——每支都變成
+#      「竿尖指向正下方」，看不出 F 和 R 的差別。
+#   ③ **模型直接壞掉**：再高就非單調（撓曲不增反減），竿尖角衝上 MAX_TIP_ANGLE_DEG，
+#      竿子被算成捲一個鉤子。702UL+FS-ST23 的斷點在 3kg、722MRB-20 在 8kg。
 #
-# ⚠️ **不得改用「線破斷強度」本身。** 實測過：那個負載下有 4 支竿會撞上
-#    MAX_TIP_ANGLE_DEG 的鉗制，撓曲百分比反而變小（竿子被算成捲一個圈）。
-#    那是模型失效，不是物理。能畫的上限就是洩力負載。
+# → 而 **1/3 全長這個點同時是三件事**：模型唯一校準過的深度（CCS 的 Action Angle
+#   就在這裡量，見 validate_ccs.py）、形狀最自然的深度、**各竿差異最大的深度**。
 #
-# ⚠️ 舊版是固定的 `FIGHT_LOAD_G = 100.0`。它的問題是同一個絕對數字對不同力量的竿
-#    意義完全不同——實測 100g 之下，H 竿只彎 10%（竿尖 23°）、UL 竿彎 24%（竿尖 64°）。
-#    改用洩力推導之後，12 支竿全部落在竿尖 87〜90°，也就是竿尖指向正下方的那個
-#    經典搏魚弧——因為原廠本來就是把適合ライン配著竿子的力量一起訂的。
+# ⚠️ **不要因為「洩力比較大所以比較真實」就把它改回去。** 大不等於畫得出來。
+DEEP_BEND_FRACTION = 1.0 / 3.0
+
+# 洩力推導：仍然計算並印在圖上，只是不拿來當繪圖負載。
 DRAG_FRACTION = 1.0 / 3.0
 LB_TO_G = 453.592
 
@@ -754,12 +756,15 @@ FIGHT_LOAD_FALLBACK_G = 100.0
 #
 # 改成各自基準之後，**力量被除掉了，剩下的是調性**——誰的彎集中在竿尖、誰整支參與。
 # 那才是規格表看不出來、而本 skill 真正知道的東西。
-#   ・"rated" → 各自的額定上限（操餌時的工作點）
-#   ・"fight" → 各自的洩力上限（搏魚時的極限）
+#   ・"shape" → 每支都加載到竿尖下沉 1/3 全長（深度統一，只比形狀）
+#
+# ⚠️ 曾經還有一個 "fight" 模式（各自的洩力上限），已移除：那個負載會把竿子推到
+#    撓曲 45〜71%，竿尖角全部飽和在 ~90°，12 支長得幾乎一樣——鑑別力最差的地方。
+#    理由詳見 DEEP_BEND_FRACTION 的註解。
 #
 # ⚠️ 代價要講清楚：這張圖**不再回答「同一條魚上不同竿誰比較吃力」**。
 #    但那個問題本來也答得不好——沒有人會拿 UL 竿和 H 竿去釣同一條魚。
-COMPARISON_MODES = ("shape", "fight")
+COMPARISON_MODES = ("shape",)
 
 
 # 額定區間內的取樣段數。取樣以**等比**分佈於「路亞負載下限 → 上限」之間，
@@ -992,7 +997,7 @@ def fmt_load(load_g):
     return "{:g}g".format(round(load_g, 1))
 
 
-def get_dynamic_load_list(lure_str, line_str=None):
+def get_dynamic_load_list(lure_str, deep_g=None):
     """依該竿的額定負載上限推演階梯，最後補一個固定的搏魚極端值。
 
     負載區間必須跟著竿子走——0.6〜5g 的 UL 竿與 11〜28g 的 H 竿，
@@ -1012,19 +1017,18 @@ def get_dynamic_load_list(lure_str, line_str=None):
     # 額定上限之上再加一個超額點。上限本身保留，因為那是對齊原廠建議的錨點。
     loads.append(round(max_lure * LOAD_OVERLOAD_RATIO, 1))
 
-    # 搏魚值只在它真的高於額定上限時才有意義。
-    # 🔴 不得用 `x < fight` 過濾整個階梯：那會把額定上限本身砍掉。
-    fight_g = drag_load_g(line_str)[0]
-    if fight_g > max_lure:
-        loads.append(round(fight_g, 1))
+    # 深彎點：畫到竿尖下沉 1/3 全長為止（理由見 DEEP_BEND_FRACTION 的註解）。
+    # 🔴 不得用 `x < deep` 過濾整個階梯：那會把額定上限本身砍掉。
+    if deep_g is not None and deep_g > max_lure:
+        loads.append(round(deep_g, 1))
 
     loads = sorted(set(loads))
     return [int(x) if x == int(x) else x for x in loads]
 
 
-def load_role(load_g, max_lure, fight_g=None):
-    """這個負載在圖上的角色：額定內／超額／搏魚。決定顏色、線型與標籤。"""
-    if fight_g is not None and abs(load_g - round(fight_g, 1)) < 0.05:
+def load_role(load_g, max_lure, deep_g=None):
+    """這個負載在圖上的角色：額定內／超額／深彎。決定顏色、線型與標籤。"""
+    if deep_g is not None and abs(load_g - round(deep_g, 1)) < 0.05:
         return "fight"
     if max_lure is not None and load_g > max_lure:
         return "overload"
@@ -1033,8 +1037,6 @@ def load_role(load_g, max_lure, fight_g=None):
 MODE_TITLE = {
     "shape": ("彎到\n同一深度",
               "每支竿都加載到「竿尖下沉\n全長 1/3」為止。\n深度統一了，剩下的差異\n純粹是形狀。\n\n圖例的克數＝各自\n需要的力量。"),
-    "fight": ("各自的\n洩力上限",
-              "每支竿掛自己的洩力上限\n（適合ライン × 1/3）。\n\n這是搏魚極限下的形狀——\n洩力才是竿子承受的\n拉力上限，不是魚的大小。"),
 }
 
 
@@ -1066,9 +1068,6 @@ def load_for_deflection(rod, target_frac=1.0 / 3.0):
 def comparison_load(rod, mode):
     """這支竿在該模式下的負載。回傳 (克數, 標籤) 或 (None, 原因)。"""
     s = rod.get("basic_specifications", {})
-    if mode == "fight":
-        g, _src = drag_load_g(s.get("Line_Rating"))
-        return g, fmt_load(g)
     if mode == "shape":
         return load_for_deflection(rod), None      # 標籤稍後補，需要知道力量
     _, mx = parse_lure_range_g(s.get("Lure_Rating"))
@@ -1163,14 +1162,14 @@ def plot_zenaq_progressive(rod, load_list, output_dir):
     # 否則讀者看不出哪一條已經超過原廠建議負載。
     _specs = rod.get("basic_specifications", {})
     _, max_lure = parse_lure_range_g(_specs.get("Lure_Rating"))
-    fight_g, _fight_src = drag_load_g(_specs.get("Line_Rating"))
+    deep_g = load_for_deflection(rod)
     bounds = [0.0, 0.0, 0.0, 0.0]  # min_x, max_x, min_y, max_y
     for i, load_g in enumerate(load_list):
         color = cmap(i / max(1, len(load_list)-1))
-        role = load_role(load_g, max_lure, fight_g)
-        # 🔴 搏魚那條標「線張力」而不只是數字：它跟上面那些「餌重」單位相同但意義不同，
-        #    不講明的話會被讀成「這支竿可以掛 3 公斤的餌」。
-        label = {"fight": "搏魚｜線張力 " + fmt_load(load_g),
+        role = load_role(load_g, max_lure, deep_g)
+        # 🔴 深彎那條標「線張力」而不只是數字：它跟上面那些「餌重」單位相同但意義不同，
+        #    不講明的話會被讀成「這支竿可以掛這麼重的餌」。
+        label = {"fight": "深彎｜線張力 " + fmt_load(load_g) + "（沉 1/3 全長）",
                  "overload": "超額 " + fmt_load(load_g)}.get(role, fmt_load(load_g))
         X, Y = calculate_bending_curve_45deg(rod, load_g)
         ax.plot(X, Y, label=label, color=color, linewidth=2.0, zorder=4)
@@ -1247,7 +1246,7 @@ def do_plot_zenaq(json_file, output_dir):
     for rod in rod_dataset:
         _s = rod.get("basic_specifications", {})
         plot_zenaq_progressive(
-            rod, get_dynamic_load_list(_s.get("Lure_Rating"), _s.get("Line_Rating")),
+            rod, get_dynamic_load_list(_s.get("Lure_Rating"), load_for_deflection(rod)),
             output_dir)
 
     print("[SUCCESS] All ZENAQ-style plots generated successfully!")
@@ -1291,16 +1290,17 @@ def plot_engineering_chart(rod_data, output_dir):
     #    原本固定 100/250/500/1000g，套在 702UL+FS-ST23（額定 0.6〜5g）上
     #    就是 20×／50×／100×／200× 額定——那不是彎曲曲線，是把竿子折斷的模擬。
     #    與 progressive 圖共用同一組階梯：兩種圖只差在持竿角度，負載定義必須一致。
-    ladder = get_dynamic_load_list(specs.get("Lure_Rating"), specs.get("Line_Rating"))
+    deep_g = load_for_deflection(rod_data)
+    ladder = get_dynamic_load_list(specs.get("Lure_Rating"), deep_g)
     _, max_lure = parse_lure_range_g(specs.get("Lure_Rating"))
-    fight_g, fight_src = drag_load_g(specs.get("Line_Rating"))
+    drag_g, drag_src = drag_load_g(specs.get("Line_Rating"))
     cmap = plt.get_cmap("viridis")
-    rated = [x for x in ladder if load_role(x, max_lure, fight_g) == "rated"]
+    rated = [x for x in ladder if load_role(x, max_lure, deep_g) == "rated"]
     loads = []
     for load_g in ladder:
-        role = load_role(load_g, max_lure, fight_g)
+        role = load_role(load_g, max_lure, deep_g)
         if role == "fight":
-            loads.append((load_g, "搏魚｜線張力 " + fmt_load(load_g), "#d62728", "-", 2.8))
+            loads.append((load_g, "深彎｜線張力 " + fmt_load(load_g), "#d62728", "-", 2.8))
         elif role == "overload":
             loads.append((load_g, "超額 " + fmt_load(load_g), "#ff7f0e", "--", 2.2))
         else:
@@ -1322,8 +1322,8 @@ def plot_engineering_chart(rod_data, output_dir):
     fig.subplots_adjust(left=0.06, right=0.66, top=0.90, bottom=0.145)
 
     handle_len = min(35.0, length_cm * 0.16)
-    fight_curves = [c for c in loads if load_role(c[0], max_lure, fight_g) == "fight"]
-    work_curves = [c for c in loads if load_role(c[0], max_lure, fight_g) != "fight"]
+    fight_curves = [c for c in loads if load_role(c[0], max_lure, deep_g) == "fight"]
+    work_curves = [c for c in loads if load_role(c[0], max_lure, deep_g) != "fight"]
 
     # 🔴 **每條曲線的圖例都要帶「竿尖下沉佔全長多少 %」。**
     #    這兩個面板的 y 軸是放大的（見下方 panel_title 的倍率標示），視覺上很容易把
@@ -1335,7 +1335,7 @@ def plot_engineering_chart(rod_data, output_dir):
 
     panels = [
         (ax_top, work_curves, "額定區間（操餌）"),
-        (ax_bot, fight_curves, "搏魚（洩力上限）"),
+        (ax_bot, fight_curves, "深彎（竿尖沉 1/3 全長）"),
     ]
     for ax, curves, panel_title in panels:
         ax.set_facecolor("#fcfcfc")
@@ -1400,12 +1400,16 @@ def plot_engineering_chart(rod_data, output_dir):
         "- Lure: {}".format(show_or_missing(specs.get("Lure_Rating"))),
         "- Line: {}".format(show_or_missing(specs.get("Line_Rating"))),
         "",
-        # 🔴 搏魚負載是推導出來的，推導鏈必須印在圖上——讀者要看得出哪一步是慣例。
-        "[搏魚負載] 線張力 {}".format(fmt_load(fight_g)),
-        "- 推導：{}".format(fight_src),
+        # 🔴 兩個數字都要印：畫的是哪一個、以及為什麼不畫另一個。
+        "[深彎點] 線張力 {}（圖上畫的）".format(fmt_load(deep_g)),
+        "- 定義：竿尖下沉 1/3 全長（CCS 標準深度）",
+        "- 這是模型唯一校準過、且各竿差異最大的深度",
+        "",
+        "[洩力上限] 線張力 {}（未繪製）".format(fmt_load(drag_g)),
+        "- 推導：{}".format(drag_src),
         "- 註：1/3 是釣魚圈慣例，非原廠規格",
-        "- 竿子承受的持續拉力上限由洩力決定，",
-        "  不由魚的大小決定",
+        "- 該負載會把竿子壓到超出模型可信範圍",
+        "  （形狀退化、各竿差異被壓平），故不繪製",
         "",
         # 🟡 這一區塊是本腳本的繪圖參數，不是原廠數據——標題就要講明，
         #    否則看圖的人會把它當成規格表的一部分。
