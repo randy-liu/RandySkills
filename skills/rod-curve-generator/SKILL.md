@@ -9,9 +9,18 @@ description: >-
 # Rod Bending Curve Generator
 
 ## Overview
-This skill processes fishing rod analysis reports (Markdown) to extract basic specifications (Tip Diameter, Butt Diameter, Lure Rating, Taper Action) and generates realistic progressive load bending curves and comparison charts using a true physics engine (Taper Power Law $I \propto D^3$).
+This skill processes fishing rod analysis reports (Markdown) to extract basic specifications (Tip Diameter, Butt Diameter, Lure Rating, Taper Action) and generates realistic progressive load bending curves and comparison charts using a large-deflection cantilever solver over a tapered compliance profile.
+
+🔴 **柔度用的是 `1/d⁴`，而且那個指數是「實測擬合出來的有效值」，不是物理推導。**
+（此處原本寫 `I ∝ D^3`，那是 CCS 校準之前的舊值。）最誘人的推導「壁厚 ∝ 直徑 ⇒ `I ∝ d⁴`」
+**已被本 repo 的資料否證**——由官方公佈的空白竿身自重反推壁厚，`t/d` 與元徑的相關係數是 −0.765。
+不得在任何地方把它寫成物理事實。詳見 `references/ccs_calibration.md` §3-3。
 
 輸入來源是 `rod-spec-decrypter` 產出的 `<型號>_分析報告.md`——**檔名是兩個 skill 之間的契約**，改檔名會讓 `extract` 找不到檔案。
+
+握把長度（不參與彎曲的那一段）另外來自 `references/measured_grip_lengths.md`，
+由 `rod-grip-measurer` 量測並寫入。**沒量過的竿款會警告、圖上標「未量測」、且不套用握把剛性**——
+那是正確行為，不得用估計值頂替。
 
 ## Dependencies
 - **uv**: This skill relies on the `uv` skill (from the science plugin) to manage Python dependencies (`matplotlib`, `numpy`) in a clean, isolated environment.
