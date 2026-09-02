@@ -844,9 +844,75 @@ TAPER_POWER_SLOPE = 2.92
 TAPER_POWER_MIN = 0.55
 TAPER_POWER_MAX = 1.60
 
+# 握把段的柔度倍率。**這是邊界條件，不是材料性質**——持竿時的固定端是手。
+# 敏感度實測（722MLRSS-24，L/3）：倍率 0.02→67.4°、0.01→67.9°、0.005→68.5°、0.002→69.2°。
+# 十倍的範圍只換到 1.8°，所以這個數字不重要，取 0.01。
+GRIP_COMPLIANCE_FACTOR = 0.01
+
+# 握把前緣的過渡寬度（公分）。
+#
+# 🔴 **這一項才敏感，而且它改的其實是「剛性段到哪裡結束」，不是「平滑程度」。**
+#    同樣倍率 0.005 下：寬度 1.7cm→66.8°、3.3cm→68.5°、6.5cm→72.5°。
+#    實體上前握把前緣是一個**銳利的邊**（EVA 結束、裸竿身開始），所以必須取窄。
+# ⚠️ 不可以拿它當調形狀的旋鈕。要動形狀請動 TAPER_POWER_*，並先讀 §10-3。
+# （用公分而不是 s 比例，是為了讓長短竿的過渡帶等寬。）
+GRIP_EDGE_CM = 2.0
+
+# 量測表的位置。逐型號的實體量測不寫進本腳本——見該檔 §0 的理由。
+GRIP_TABLE_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "references", "measured_grip_lengths.md")
+_GRIP_TABLE = None
+_GRIP_MISSING_WARNED = set()
+
+
+def load_grip_table():
+    """讀 references/measured_grip_lengths.md 的量測表 → {型號: 握把公分}。
+
+    表格格式：| 型號 | 種類 | 全長 cm | **握把 cm** | ... |
+    只認「第 4 欄可以轉成浮點數」的資料列，所以標題列與分隔列會自動被跳過。
+    """
+    global _GRIP_TABLE
+    if _GRIP_TABLE is not None:
+        return _GRIP_TABLE
+    table = {}
+    try:
+        with open(GRIP_TABLE_PATH, encoding="utf-8") as fh:
+            for line in fh:
+                if not line.lstrip().startswith("|"):
+                    continue
+                cells = [c.strip().strip("*`") for c in line.strip().strip("|").split("|")]
+                if len(cells) < 4:
+                    continue
+                try:
+                    grip = float(cells[3])
+                except ValueError:
+                    continue
+                if cells[0]:
+                    table[cells[0]] = grip
+    except OSError as exc:
+        print("[WARN] 讀不到握把量測表 {}：{}".format(GRIP_TABLE_PATH, exc), file=sys.stderr)
+    _GRIP_TABLE = table
+    return table
+
+
+def grip_length_cm(model_name):
+    """回傳該型號的握把長度（公分）；沒量過就回 None。
+
+    🔴 **沒量過時不得用估計值頂替。** 同樣 218cm 的六支，握把差 10.7cm，
+       任何公式都只是把雜訊寫進圖裡。回 None，讓呼叫端照實標「未量測」。
+    """
+    grip = load_grip_table().get(model_name)
+    if grip is None and model_name not in _GRIP_MISSING_WARNED:
+        _GRIP_MISSING_WARNED.add(model_name)
+        print("[WARN] {} 沒有握把量測值 → 本圖不計入握把剛性，圖上會標「未量測」。"
+              "\n       ⚠️ 跨竿對比圖若混入未量測的竿，等於用兩套物理在比形狀。"
+              .format(model_name), file=sys.stderr)
+    return grip
+
 
 def build_compliance(s_norm, tip_dia, butt_dia, p_flex0, k_power, mu_tip, mu_butt,
-                     is_reinforced_butt, butt_behaviour):
+                     is_reinforced_butt, butt_behaviour,
+                     grip_frac=0.0, grip_edge_frac=0.01):
     """沿竿身的柔度剖面（s_norm：0 = 元端，1 = 竿先）。**兩種圖共用**。
 
     🔴 這裡刻意只有「平滑的錐度」一個形狀來源。先前的版本額外疊了一個高斯彎曲區
@@ -896,6 +962,17 @@ def build_compliance(s_norm, tip_dia, butt_dia, p_flex0, k_power, mu_tip, mu_but
     # 6. 報告的絕對剛度判定（全體纖細／元端過剩）。
     #    ⚠️ 必須在正規化**之前**——它會改變剖面形狀，形狀一動撓曲量就跟著動。
     compliance = apply_butt_behaviour(compliance, butt_behaviour)
+
+    # 6-b. 握把段剛化。grip_frac＝握把長度佔全長的比例（0 表示不套用）。
+    #
+    # 🔴 **這不是材料性質，是邊界條件。** 持竿時的固定端是**手**，不是竿尾——
+    #    手以下的竿身相對於手不會彎。所以這一段該當成剛體，而不是去估「輪座有多硬」。
+    #    也因此倍率取多小影響不大（0.002〜0.02 之間竿尖角只差 1.8°），
+    #    真正敏感的是**過渡寬度**，見 GRIP_EDGE_CM 的註解。
+    if grip_frac > 0.0:
+        edge = max(grip_edge_frac, 1e-4)
+        ramp = 1.0 / (1.0 + np.exp((s_norm - grip_frac) / edge))
+        compliance = compliance / (1.0 + (1.0 / GRIP_COMPLIANCE_FACTOR - 1.0) * ramp)
 
     # 7. 逐竿正規化：形狀（＝調性）留著，絕對量級交給 k_power 與力量律決定。
     #
@@ -950,6 +1027,11 @@ def rod_compliance(rod_data, num_points=300):
     mat_info = rod_data.get("material_and_structure_effects", {})
     butt_struct = mat_info.get("Butt_Structure") or ""
 
+    # 握把段：量過就剛化，沒量過就照舊（並已在 grip_length_cm 印過警告）。
+    length_cm = parse_length_cm(specs.get("Length"))
+    grip_cm = grip_length_cm(rod_data.get("model_name"))
+    grip_frac = (grip_cm / length_cm) if (grip_cm and length_cm) else 0.0
+
     s_norm = np.linspace(0.0, 1.0, num_points)
     return build_compliance(
         s_norm=s_norm,
@@ -961,6 +1043,8 @@ def rod_compliance(rod_data, num_points=300):
         mu_butt=float(params.get("butt_stiffness_multiplier") or 1.0),
         is_reinforced_butt=("3DX" in butt_struct) and ("Excluded" not in butt_struct),
         butt_behaviour=rod_butt_behaviour(rod_data),
+        grip_frac=grip_frac,
+        grip_edge_frac=(GRIP_EDGE_CM / length_cm) if length_cm else 0.01,
     )
 
 
@@ -1097,8 +1181,10 @@ def plot_zenaq_comparison(rod_list, category_name, mode, output_dir):
     ax.spines['left'].set_color('#dddddd')
     ax.grid(True, linestyle="-", alpha=0.3, color="#bbbbbb")
 
-    hx, hy = np.linspace(0, 35.0 * math.cos(3*math.pi/4), 10), np.linspace(0, 35.0 * math.sin(3*math.pi/4), 10)
-    ax.plot(hx, hy, color="#222222", linewidth=6, zorder=5, solid_capstyle='round')
+    # 🔴 這裡原本畫一根寫死 35cm 的黑色握把棒。同一張圖上的竿握把長度其實不一樣
+    #    （本系列實測 27.3〜43.2cm），畫成同一根等於在宣告一個假的共同值。
+    #    現在不畫了——每條曲線元端本來就有一段自己的直線，那才是該竿的實測握把。
+    grips = [g for g in (grip_length_cm(r.get("model_name")) for r in rod_list) if g]
 
     bounds = [0.0, 0.0, 0.0, 0.0]  # min_x, max_x, min_y, max_y
     for idx, rod in enumerate(rod_list):
@@ -1128,6 +1214,12 @@ def plot_zenaq_comparison(rod_list, category_name, mode, output_dir):
     # Load Box in the right margin
     props = dict(boxstyle="square,pad=0.5", facecolor="black", edgecolor="black")
     _mt, _msub = MODE_TITLE[mode]
+    # 🔴 這行不能放進右側欄——竿數多的時候圖例會長到撞上它。放圖下方。
+    if grips:
+        fig.text(0.012, 0.075,
+                 "各曲線元端的直線段＝該竿的實測握把（本圖 {:.1f}〜{:.1f}cm，"
+                 "官方商品圖量測，非原廠規格）".format(min(grips), max(grips)),
+                 fontsize=7.5, color="#707070")
     fig.text(0.87, 0.86, _mt, fontsize=15, color="white", fontweight='bold',
              ha='center', va='top', bbox=props)
     fig.text(0.87, 0.70, _msub, fontsize=8.5, color="#555555", ha='center', va='top',
@@ -1165,8 +1257,13 @@ def plot_zenaq_progressive(rod, load_list, output_dir):
     ax.spines['left'].set_color('#dddddd')
     ax.grid(True, linestyle="-", alpha=0.3, color="#bbbbbb")
 
-    hx, hy = np.linspace(0, 35.0 * math.cos(3*math.pi/4), 10), np.linspace(0, 35.0 * math.sin(3*math.pi/4), 10)
-    ax.plot(hx, hy, color="#222222", linewidth=6, zorder=5, solid_capstyle='round')
+    # 握把棒畫該竿的實測長度（原本寫死 35cm，見 references/measured_grip_lengths.md）。
+    # 沒量過就不畫——畫一根長度沒有依據的棒子，等於在圖上宣告一個沒查證的數字。
+    _grip = grip_length_cm(model_name)
+    if _grip:
+        hx = np.linspace(0, _grip * math.cos(3 * math.pi / 4), 10)
+        hy = np.linspace(0, _grip * math.sin(3 * math.pi / 4), 10)
+        ax.plot(hx, hy, color="#222222", linewidth=6, zorder=5, solid_capstyle='round')
 
     cmap = plt.get_cmap("rainbow")
     # 標籤與工程圖一致：額定內只寫克數，超出額定與搏魚要點名，
@@ -1332,7 +1429,13 @@ def plot_engineering_chart(rod_data, output_dir):
     # bottom 需同時容納 X 軸標題與 add_static_note() 的兩行聲明。
     fig.subplots_adjust(left=0.06, right=0.66, top=0.90, bottom=0.145)
 
-    handle_len = min(35.0, length_cm * 0.16)
+    # 握把段的長度：用量測值，沒量過就不畫。
+    #
+    # 🔴 這裡原本是 `min(35.0, length_cm * 0.16)`——一個寫死的猜測值，而且**只畫出來、
+    #    從來沒進過物理**。圖上等於在宣告一個沒查證、模型自己也不承認的長度。
+    #    （對 213cm 的 702UL+FS-ST23 它給 34.1cm，實測 27.3cm，長了 25%。）
+    #    現在同一個數字既畫也算，來源是 references/measured_grip_lengths.md。
+    handle_len = grip_length_cm(rod_data.get("model_name"))
     fight_curves = [c for c in loads if load_role(c[0], max_lure, deep_g) == "fight"]
     work_curves = [c for c in loads if load_role(c[0], max_lure, deep_g) != "fight"]
 
@@ -1350,9 +1453,11 @@ def plot_engineering_chart(rod_data, output_dir):
     ]
     for ax, curves, panel_title in panels:
         ax.set_facecolor("#fcfcfc")
-        ax.axvspan(-2, handle_len, color="#e0e0e0", alpha=0.4, zorder=1,
-                   label="Grip / Reel Seat Zone" if ax is ax_top else None)
-        ax.plot([0, handle_len], [0, 0], color="#555555", linewidth=5, zorder=2)
+        if handle_len:
+            ax.axvspan(-2, handle_len, color="#e0e0e0", alpha=0.4, zorder=1,
+                       label="Grip / Reel Seat Zone（量測 {:.1f}cm）".format(handle_len)
+                       if ax is ax_top else None)
+            ax.plot([0, handle_len], [0, 0], color="#555555", linewidth=5, zorder=2)
         ax.plot([0, length_cm], [0, 0], color="#888888", linestyle=":", linewidth=1.5,
                 label="Unloaded Rod Baseline" if ax is ax_top else None, zorder=3)
         min_y = 0.0
@@ -1396,6 +1501,7 @@ def plot_engineering_chart(rod_data, output_dir):
     subtitle_str = f"Official Taper: {official_taper} | Tip: {tip_struct} | Calc Action: {calc_action}"
     fig.suptitle(f"{title_str}\n{subtitle_str}", fontsize=12, fontweight="bold", y=0.985)
 
+    _grip_cm = grip_length_cm(rod_data.get("model_name"))
     ratio_source = specs.get("Taper_Ratio_Source")
     ratio_note = "（{}）".format(ratio_source) if ratio_source else ""
     info_lines = [
@@ -1425,6 +1531,9 @@ def plot_engineering_chart(rod_data, output_dir):
         # 🟡 這一區塊是本腳本的繪圖參數，不是原廠數據——標題就要講明，
         #    否則看圖的人會把它當成規格表的一部分。
         "[Model Parameters] 繪圖用推估值，非原廠數據",
+        "- Grip (rigid): {}".format(
+            "{:.1f}cm（官方商品圖量測，非原廠規格）".format(_grip_cm)
+            if _grip_cm else "未量測 → 本圖不計入握把剛性"),
         "- Initial Flex Point: {}%".format(params.get("initial_flex_point_pct")),
         "- Power Stiffness (Kp): {}".format(params.get("power_stiffness_factor")),
         "- Tip Mult: {} | Butt Mult: {}".format(
