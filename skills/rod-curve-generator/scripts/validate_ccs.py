@@ -41,6 +41,7 @@ from rod_curve_cli import (  # noqa: E402
     build_compliance,
     classify_butt_behaviour,
     derive_curve_parameters,
+    load_grip_table,
     solve_bending,
     START_ANGLE_HORIZONTAL,
 )
@@ -193,6 +194,29 @@ def monotonic_check():
     return True
 
 
+def grip_table_check():
+    """握把量測表要讀得進來，而且讀進來的必須真的是「握把」。
+
+    🔴 這道檢查的由來：`measured_grip_lengths.md` 後來加了第二張同形狀的表
+       （可利用竿長，第 4 欄是 177.8 而不是握把 30.2），舊解析器照欄位序讀，
+       **第二張把第一張整個覆蓋掉**——12 張圖全部畫錯，過程中沒有任何錯誤訊息，
+       是靠逐像素比對舊圖才發現的。文件會長大，解析器不能靠「剛好只有一張表」活著。
+    """
+    table = load_grip_table()
+    if not table:
+        print("[握把表] 🔴 解析出 0 筆——表格格式壞了，所有圖都會少掉握把剛性")
+        return False
+    bad = {m: g for m, g in table.items() if not (15.0 <= g <= 60.0)}
+    if bad:
+        print("[握把表] 🔴 有數值落在合理範圍（15〜60cm）外，八成是讀到別欄：")
+        for m, g in sorted(bad.items()):
+            print(f"           {m}: {g}cm")
+        return False
+    print(f"[握把表] ✅ 讀到 {len(table)} 筆，全部落在 "
+          f"{min(table.values()):.1f}〜{max(table.values()):.1f}cm")
+    return True
+
+
 def main():
     argparse.ArgumentParser(description="CCS Action Angle 回歸測試").parse_args()
 
@@ -201,6 +225,7 @@ def main():
     print("=" * 74)
     ok_measure = sanity_check()
     ok_monotonic = monotonic_check()
+    ok_grip = grip_table_check()
     if not ok_measure:
         sys.exit(1)
     print(f"受測：rod_curve_cli 的 derive_curve_parameters() → build_compliance()"
@@ -234,7 +259,7 @@ def main():
     print(f"相關係數   {np.corrcoef(est, pub)[0, 1]:+6.3f}")
     print("")
 
-    failed = not ok_monotonic
+    failed = (not ok_monotonic) or (not ok_grip)
     if spread < pub_spread * SPREAD_GATE_RATIO:
         print(f"🔴 **未通過：模型跨距 {spread:.1f}° 不足實測跨距的 "
               f"{SPREAD_GATE_RATIO*100:.0f}%——引擎對錐度差異缺乏鑑別力。**")
