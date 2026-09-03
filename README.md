@@ -171,6 +171,7 @@ AI 會自動載入廠牌字典、拆解型號、呼叫 Python 腳本完成幾何
 skills/
 ├── rod-spec-decrypter/
 │   ├── SKILL.md                          # 角色定義、守則、執行流程
+│   ├── README.md                          # 三本字典的分工、兩支腳本的權限邊界（本 skill 專屬）
 │   ├── references/
 │   │   ├── daiwa_technology.md           # 技術名詞 → 物理影響（必載，不得登錄型號）
 │   │   ├── daiwa_model_naming.md         # 型號字串 → 規格欄位（必載）
@@ -179,7 +180,8 @@ skills/
 │       ├── calculate_taper.py            # 錐度運算與失效診斷
 │       └── calculate_sensitivity.py      # 感度鏈路運算（不輸出分數）
 ├── rod-tech-splitter/
-│   └── SKILL.md                          # 官方技術清單 → 逐型號搭載明細
+│   ├── SKILL.md                          # 官方技術清單 → 逐型號搭載明細
+│   └── README.md                          # 標註規則、衝突消解、可信度三層（本 skill 專屬）
 ├── rod-grip-measurer/
 │   ├── SKILL.md                          # Step −1、退場條件、執行流程
 │   ├── README.md                          # 量法與三道防線的由來（本 skill 專屬）
