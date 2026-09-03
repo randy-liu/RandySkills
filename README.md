@@ -2,15 +2,16 @@
 
 Randy 的專屬 AI 助手技能庫 (Agent Skills)。
 
-目前收錄 **3 個 Skill**：
+目前收錄 **4 個 Skill**：
 
 | Skill | 做什麼 |
 |---|---|
 | [**rod-spec-decrypter**](#釣竿盲狙解碼矩陣-rod-spec-decrypter) | 分析單一竿款：反推調性、手感、感度 |
 | [**rod-tech-splitter**](#技術搭載拆分器-rod-tech-splitter) | 建檔工具：把官方系列技術清單拆到各型號 |
+| [**rod-grip-measurer**](#握把長度量測器-rod-grip-measurer) | 建檔工具：規格表沒有握把長度時，改由官方商品圖量 |
 | [**rod-curve-generator**](#彎曲曲線產生器-rod-curve-generator) | 把分析報告畫成受力彎曲曲線圖 |
 
-**職責嚴格分離**——第一個只讀資料、不寫字典；第二個只做歸屬判定、不碰手感分析；第三個只吃前者的報告、不自行推導規格。
+**職責嚴格分離**——解碼器只讀資料、不寫字典；兩個建檔工具各自只負責一種事實（技術歸屬／握把長度），都不碰手感分析；曲線產生器只吃前者的報告與量測表，不自行推導規格。
 
 ---
 
@@ -101,8 +102,8 @@ Randy 的專屬 AI 助手技能庫 (Agent Skills)。
 - **Node.js** — 執行安裝腳本。
 - **Python 3** — `rod-spec-decrypter` 分析時會呼叫 `scripts/` 底下的兩支腳本：`calculate_taper.py`（錐度）與 `calculate_sensitivity.py`（感度鏈路）。
   未安裝 Python 不影響安裝，但分析時 AI 將無法取得幾何判定結果。
-- **uv**（選用，僅 `rod-curve-generator` 需要）— 繪圖腳本依賴 `numpy` 與 `matplotlib`，以 PEP 723 內聯宣告、由 `uv` 隔離管理，不汙染全域環境。
-  ⚠️ `uv` 不隨本 repo 安裝；沒有它就只是畫不出曲線圖，其餘功能不受影響。
+- **uv**（選用，`rod-curve-generator` 與 `rod-grip-measurer` 需要）— 前者依賴 `numpy` 與 `matplotlib`，後者依賴 `numpy` 與 `pillow`，皆以 PEP 723 內聯宣告、由 `uv` 隔離管理，不汙染全域環境。
+  ⚠️ `uv` 不隨本 repo 安裝；沒有它就只是畫不出曲線圖、量不了握把，其餘功能不受影響。
 
 ## 🚀 安裝方式
 
@@ -177,11 +178,20 @@ skills/
 │       └── calculate_sensitivity.py      # 感度鏈路運算（不輸出分數）
 ├── rod-tech-splitter/
 │   └── SKILL.md                          # 官方技術清單 → 逐型號搭載明細
+├── rod-grip-measurer/
+│   ├── SKILL.md                          # Step −1、退場條件、執行流程
+│   ├── README.md                          # 量法與三道防線的由來（本 skill 專屬）
+│   ├── references/
+│   │   └── reference_photos.md           # 回歸測試答案卷（12 支官方圖網址＋量測值）
+│   └── scripts/
+│       ├── measure_grip.py               # 官方商品圖 → 握把長度／可利用竿長
+│       └── validate_grips.py             # 量測回歸測試（改偵測邏輯必跑）
 └── rod-curve-generator/
     ├── SKILL.md                          # 指令封裝與資料誠實守則
     ├── README.md                          # 雙模產圖的說明（本 skill 專屬）
     ├── references/
-    │   └── ccs_calibration.md            # 彎曲形狀的答案卷（CCS 實測 21 支）與其限制
+    │   ├── ccs_calibration.md            # 彎曲形狀的答案卷（CCS 實測 21 支）與其限制
+    │   └── measured_grip_lengths.md      # 逐型號握把長度（由 rod-grip-measurer 寫入）
     └── scripts/
         ├── rod_curve_cli.py              # 分析報告 → JSON → 彎曲曲線 PNG
         └── validate_ccs.py               # 形狀回歸測試（改柔度定律必跑）
