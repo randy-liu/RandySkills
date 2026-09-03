@@ -17,6 +17,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
+from matplotlib.collections import LineCollection
 
 # Ensure UTF-8 output encoding.
 # 🔴 stderr 也必須一起設定：錯誤訊息是中文，而 Windows 主控台預設 cp950，
@@ -1412,6 +1413,55 @@ def calculate_bending_curve_horizontal(rod_data, load_g, num_points=300):
     )
 
 
+# ---- 工程圖的版面幾何 ----
+#
+# 🔴 **等比例面板不是用 `set_aspect('equal')` 做的，是算出來的。**
+#    `set_aspect` 會為了滿足比例去擠壓 axes box，跟 gridspec／sharex 打架，
+#    畫出來的版面會隨竿長跳動。改成反過來：gridspec 用**固定**的英吋高度，
+#    再由「面板實際英吋 ÷ (座標軸寬英吋 ÷ x 範圍公分)」反推 ylim。
+#    → 每支竿都是精確 1:1，而且 12 張圖的版面完全一致。
+FIG_W_IN, FIG_H_IN = 15.0, 9.9
+AXES_LEFT, AXES_RIGHT = 0.06, 0.66
+AXES_W_IN = FIG_W_IN * (AXES_RIGHT - AXES_LEFT)      # 9.0 in
+AXES_TOP, AXES_BOTTOM = 0.935, 0.105
+PANEL_HSPACE = 0.42
+X_MARGIN_CM = 15.0     # set_xlim(-5, length+10) 的總跨距
+
+# ① 尺寸帶　② 額定等比例　③ 額定放大　④ 深彎等比例
+#
+# ⚠️ 這是 gridspec 的**比例**，不是英吋——hspace 還會再吃掉高度。
+#    這組數字是實算出來的：12 支竿在 ② 需容納 4.4〜11.4cm、④ 需 73.5〜86.2cm，
+#    而這組比例給出 ② 17.4〜20.3cm、④ 77.4〜89.9cm，**每一支都放得下**。
+#    動它之前先重算，否則會有竿子的曲線被裁掉（而且裁掉不會報錯）。
+PANEL_RATIOS = [0.55, 0.80, 2.20, 3.55]
+
+# 握把段的畫法：靠竿尾這一端的粗度（points），以及從哪個比例開始收細。
+# 收成跟曲線一樣細，前緣才接得上；不收的話那裡會出現粗細落差（看起來像斷線）。
+GRIP_BAR_LW = 7.0
+GRIP_TAPER_FROM = 0.70
+
+
+def equal_aspect_ylim(ax, x_range_cm, min_y_cm, headroom=0.25):
+    """回傳讓該面板成為精確 1:1 的 (ymin, ymax)。
+
+    🔴 高度取自 `ax.get_position()`——**面板實際佔了多少就是多少**，
+       不是拿 PANEL_RATIOS 當英吋用（那是比例，還要扣 hspace）。
+       x 方向的 in/cm 由座標軸寬度與 x 範圍決定，兩者一除就是這一格能容納的公分數。
+    """
+    panel_h_in = ax.get_position().height * FIG_H_IN
+    in_per_cm = AXES_W_IN / x_range_cm
+    span_cm = panel_h_in / in_per_cm
+    # 先給 headroom，但不足以容納曲線時讓位——寧可上緣貼齊，也不要把曲線裁掉。
+    top = min(span_cm * headroom, span_cm - abs(min_y_cm) * 1.06)
+    if top < 0:
+        # 幾何上放不下 1:1。不靜靜地裁掉，出聲。
+        print("[WARN] 等比例面板高度不足（可容納 {:.1f}cm，曲線需 {:.1f}cm）"
+              "→ 該面板已非 1:1，請重算 PANEL_RATIOS。".format(span_cm, abs(min_y_cm)),
+              file=sys.stderr)
+        top = span_cm * 0.05
+    return top - span_cm, top
+
+
 def plot_engineering_chart(rod_data, output_dir):
     model_name = sanitize_text(rod_data["model_name"])
     category = rod_data.get("category")
@@ -1456,12 +1506,17 @@ def plot_engineering_chart(rod_data, output_dir):
     #    額定區會被壓成頂端一條線——而那正是釣手每天在用的區間。
     #    拆開之後不動任何物理、不丟任何資訊，只是把兩個在回答不同問題的東西分開放：
     #      上＝操餌時什麼感覺　　下＝搏魚時什麼樣子
-    fig, (ax_top, ax_bot) = plt.subplots(
-        2, 1, figsize=(15, 8.6), dpi=300, sharex=True,
-        gridspec_kw={"height_ratios": [1.0, 1.0], "hspace": 0.16})
+    #    🔴 **額定區有兩格，一格等比例、一格放大——這不是重複。**
+    #    放大那一格能回答「掛 8g 沉幾公分」，但它畫出來的**形狀是假的**：
+    #    實際只彎全長的 2.2%，圖上看起來像彎了 25%。先前只把倍率與「佔全長 %」
+    #    印出來，那讓人讀得到數字、卻仍然無法參考形狀。
+    #    → 所以「真實形狀」與「可讀的數字」各給一格，不再互相冒充。
+    fig, (ax_dim, ax_true, ax_top, ax_bot) = plt.subplots(
+        4, 1, figsize=(15, FIG_H_IN), dpi=300, sharex=True,
+        gridspec_kw={"height_ratios": PANEL_RATIOS, "hspace": PANEL_HSPACE})
     fig.patch.set_facecolor("white")
     # bottom 需同時容納 X 軸標題與 add_static_note() 的兩行聲明。
-    fig.subplots_adjust(left=0.06, right=0.66, top=0.90, bottom=0.145)
+    fig.subplots_adjust(left=0.06, right=0.66, top=AXES_TOP, bottom=AXES_BOTTOM)
 
     # 握把段的長度：用量測值，沒量過就不畫。
     #
@@ -1481,59 +1536,117 @@ def plot_engineering_chart(rod_data, output_dir):
         _X, _Y = calculate_bending_curve_horizontal(rod_data, load_g)
         tip_pct[load_g] = abs(float(_Y[-1])) / length_cm * 100.0
 
+    # ---- ① 竿身尺寸帶：只講長度，沒有 y 意義 ----
+    # 這條帶跟下面三格共用 X 軸，所以握把邊界會跟灰帶對齊。
+    ax_dim.set_facecolor("white")
+    for _side in ("top", "right", "left", "bottom"):
+        ax_dim.spines[_side].set_visible(False)
+    ax_dim.set_yticks([])
+    ax_dim.tick_params(axis="x", length=0)
+    ax_dim.set_ylim(-1.0, 1.0)
+    if handle_len:
+        ax_dim.plot([0, handle_len], [0, 0], color="#333333", linewidth=7,
+                    solid_capstyle="butt", zorder=3)
+        ax_dim.text(handle_len / 2.0, -0.62,
+                    "握把＋輪座 {:.1f}cm".format(handle_len),
+                    fontsize=8.5, color="#333333", ha="center", va="top")
+        ax_dim.annotate("", xy=(handle_len, 0), xytext=(length_cm, 0),
+                        arrowprops=dict(arrowstyle="<->", color="#3a7d44", lw=1.6), zorder=3)
+        ax_dim.text((handle_len + length_cm) / 2.0, 0.28,
+                    "可利用竿長 {:.1f}cm（{:.0f}% 全長）".format(
+                        length_cm - handle_len, 100.0 * (length_cm - handle_len) / length_cm),
+                    fontsize=9, color="#3a7d44", ha="center", va="bottom", fontweight="bold")
+    else:
+        # 🔴 沒量過就不要畫一條長度沒有依據的帶子——照實說沒有。
+        ax_dim.plot([0, length_cm], [0, 0], color="#bbbbbb", linewidth=3,
+                    linestyle=":", zorder=3)
+        ax_dim.text(length_cm / 2.0, 0.28, "握把未量測 → 無法計算可利用竿長",
+                    fontsize=9, color="#999999", ha="center", va="bottom")
+    ax_dim.set_title("竿身尺寸", fontsize=9.5, color="#444444", loc="left", pad=4)
+
+    # ---- ②③④ 三格曲線 ----
+    # ② 與 ③ 是**同一組負載、同一組曲線**，唯一差別是 y 軸比例：
+    #    ② 看形狀（可信），③ 讀數字（形狀不可信）。
     panels = [
-        (ax_top, work_curves, "額定區間（操餌）"),
-        (ax_bot, fight_curves, "深彎（竿尖沉 1/3 全長）"),
+        (ax_true, work_curves, "額定區間（操餌）", True),
+        (ax_top, work_curves, "額定區間（操餌）", False),
+        (ax_bot, fight_curves, "深彎（竿尖沉 1/3 全長）", True),
     ]
-    for ax, curves, panel_title in panels:
+    for ax, curves, panel_title, equal_aspect in panels:
         ax.set_facecolor("#fcfcfc")
         if handle_len:
             ax.axvspan(-2, handle_len, color="#e0e0e0", alpha=0.4, zorder=1,
                        label="Grip / Reel Seat Zone　握把＋輪座（量測 {:.1f}cm）".format(handle_len)
-                       if ax is ax_top else None)
-            ax.plot([0, handle_len], [0, 0], color="#555555", linewidth=5, zorder=2)
+                       if ax is ax_true else None)
+            # 握把畫成**漸縮**的粗段：靠竿尾維持握把該有的粗度，到前緣收成跟曲線一樣細。
+            #
+            # 🔴 兩個都要，缺一個就出事，這兩種錯我都犯過：
+            #    ① 固定 linewidth=5 直接切斷 → 握把段 21px、過了前緣只剩 11px，
+            #       竿身在那一點驟然變細一半，看起來像線斷掉（使用者回報的「破點」）。
+            #    ② 為了消掉落差把它縮成跟曲線一樣粗又壓在曲線下 → **整根握把消失**。
+            #    → 漸縮同時解決兩者：看得見握把，而且前緣接得上。
+            #    粗細用 points（螢幕座標），所以三個面板的 y 比例不同也不會變形。
+            _tip_lw = max(c[4] for c in curves) if curves else 2.8
+            _n = 48
+            _gx = np.linspace(0.0, handle_len, _n + 1)
+            _segs = np.stack([np.column_stack([_gx[:-1], np.zeros(_n)]),
+                              np.column_stack([_gx[1:], np.zeros(_n)])], axis=1)
+            _t = np.clip((_gx[:-1] - GRIP_TAPER_FROM * handle_len)
+                         / max(1e-6, (1.0 - GRIP_TAPER_FROM) * handle_len), 0.0, 1.0)
+            _lws = GRIP_BAR_LW + (_tip_lw - GRIP_BAR_LW) * _t
+            # zorder 高於曲線：握把段本來就不彎，讓它蓋住那幾條重疊的線比較乾淨。
+            ax.add_collection(LineCollection(_segs, colors="#555555", linewidths=_lws,
+                                             capstyle="round", zorder=6))
         ax.plot([0, length_cm], [0, 0], color="#888888", linestyle=":", linewidth=1.5,
-                label="Unloaded Rod Baseline　未受力基準線" if ax is ax_top else None, zorder=3)
+                label="Unloaded Rod Baseline　未受力基準線" if ax is ax_true else None, zorder=3)
         min_y = 0.0
         for load_g, label_text, color_code, line_style, line_width in curves:
             X, Y = calculate_bending_curve_horizontal(rod_data, load_g)
-            ax.plot(X, Y, label="{}  ({:.1f}% 全長)".format(label_text, tip_pct[load_g]),
-                    color=color_code, linestyle=line_style,
-                    linewidth=line_width, zorder=4)
+            # ②③ 畫的是同一組曲線，圖例只能出現一次——兩份會讓人以為那是兩組不同的東西。
+            #
+            # 🔴 **虛線那條（超額）必須壓在實線底下。** 等比例那一格裡 8 條曲線幾乎重合，
+            #    虛線畫在最上面會把整束線蓋成虛線——看起來像曲線斷斷續續、畫壞了。
+            #    （使用者就是這樣回報的：「紅線的彎曲線有些圖是斷斷續續的」。）
+            #    放到底層之後：重合時由實線決定外觀；放大那一格它本來就分得開，照樣看得見。
+            ax.plot(X, Y, color=color_code, linestyle=line_style, linewidth=line_width,
+                    zorder=3.6 if line_style == "--" else 4,
+                    label=None if ax is ax_top else
+                    "{}  ({:.1f}% 全長)".format(label_text, tip_pct[load_g]))
             ax.scatter(X[-1], Y[-1], color=color_code, s=40, zorder=5)
             min_y = min(min_y, float(np.min(Y)))
         ax.grid(True, linestyle="--", alpha=0.5, color="#bbbbbb")
         ax.set_xlim(-5, length_cm + 10)
-        # 🔴 每個面板各自縮放 y。兩個面板的 y 刻度**不同**，所以不可以隔空目測比長度——
-        #    面板標題已標明各自的範圍。
-        ax.set_ylim(min_y * 1.18 if min_y < 0 else -1.0, max(1.0, -min_y * 0.12))
+        _xr = length_cm + X_MARGIN_CM
+        if equal_aspect:
+            ax.set_ylim(*equal_aspect_ylim(ax, _xr, min_y))
+        else:
+            ax.set_ylim(min_y * 1.18 if min_y < 0 else -1.0, max(1.0, -min_y * 0.12))
         ax.set_ylabel("Deflection (cm)", fontsize=9.5, fontweight="bold", labelpad=6)
 
-        # 可利用竿長＝全長 − 握把：手以上、真正會彎的那一段。只標在上面板，
-        # 標兩次只是重複。畫在 y>0 的留白區，那裡不會有曲線（曲線一律往下彎）。
-        if handle_len and ax is ax_top:
-            _wy = ax.get_ylim()[1] * 0.45
-            ax.annotate("", xy=(handle_len, _wy), xytext=(length_cm, _wy),
-                        arrowprops=dict(arrowstyle="<->", color="#3a7d44", lw=1.4),
-                        zorder=6)
-            ax.text((handle_len + length_cm) / 2.0, _wy,
-                    "可利用竿長 {:.1f}cm（{:.0f}% 全長）".format(
-                        length_cm - handle_len, 100.0 * (length_cm - handle_len) / length_cm),
-                    fontsize=8.5, color="#3a7d44", ha="center", va="bottom", zorder=7)
         # 🔴 **垂直放大倍率必須印出來。**
         #    y 軸縮放到只有幾公分、x 軸卻是整支竿的長度，畫框又是扁的——不標的話，
         #    額定上限那 2.7% 的撓曲會被看成竿子已經彎得很深，讀者會得到
         #    「這支竿在工作負載下就把彈力耗光、投不遠」這個完全相反的結論。
         _box = ax.get_position()
-        _xr = (length_cm + 15.0)
         _yr = abs(ax.get_ylim()[1] - ax.get_ylim()[0])
-        _exag = (_xr / _yr) / ((_box.width * 15.0) / (_box.height * 8.6))
-        # 搏魚面板的 y 範圍本來就大，往往是**壓縮**而非放大——兩種情況都要照實講，
-        # 印成「放大 ≈0×」只會讓人以為程式壞了。
-        if _exag >= 1.5:
-            _note = "垂直放大 ≈{:.0f}×（實際彎曲遠比看起來平緩）".format(_exag)
+        _exag = (_xr / _yr) / ((_box.width * FIG_W_IN) / (_box.height * FIG_H_IN))
+        if equal_aspect:
+            # 🔴 **不要在這裡檢查 `_exag ≈ 1`——那是套套邏輯。**
+            #    ylim 就是用 get_position() 的高度算出來的，_exag 再用同一組數字推回去，
+            #    代數上恆等於 1，永遠不會報警。（寫過一次，測了才發現它抓不到任何東西。）
+            #    真正會壞的是「AXES_W_IN 這個常數」與「實際 subplots_adjust 出來的寬度」
+            #    走音——只要有人改了 left/right 卻忘了改常數，1:1 就默默失效。
+            _actual_w_in = _box.width * FIG_W_IN
+            if abs(_actual_w_in - AXES_W_IN) > 0.02:
+                print("[WARN] AXES_W_IN 常數是 {:.2f}in，但座標軸實際寬 {:.2f}in"
+                      "——等比例面板已失效，請同步 AXES_LEFT／AXES_RIGHT。"
+                      .format(AXES_W_IN, _actual_w_in), file=sys.stderr)
+            _note = "［等比例 1:1］這是真實的彎曲形狀"
+        elif _exag >= 1.5:
+            _note = ("［垂直放大 ≈{:.0f}×］非等比例：只能讀數字"
+                     "（沉幾 cm、彎從哪裡開始），形狀請看上一格".format(_exag))
         elif _exag <= 0.7:
-            _note = "垂直壓縮 ≈{:.1f}×（實際彎曲比看起來更深）".format(_exag)
+            _note = "［垂直壓縮 ≈{:.1f}×］實際彎曲比看起來更深".format(_exag)
         else:
             _note = "接近等比例"
         ax.set_title("{}　　{}".format(panel_title, _note),
@@ -1616,9 +1729,10 @@ def plot_engineering_chart(rod_data, output_dir):
     # 座標軸頂端在 figure 的 0.88，所以這一行要放在其上方才不會壓到圖例；
     # 主標題置中於左側圖表區，右欄在這個高度是空的。
     # 兩個面板的曲線合成一份圖例——分成兩份會讓讀者以為那是兩組不同的東西。
-    _h, _l = ax_top.get_legend_handles_labels()
+    _h, _l = ax_true.get_legend_handles_labels()
     _h2, _l2 = ax_bot.get_legend_handles_labels()
-    ax_top.legend(_h + _h2, _l + _l2, loc="upper left", bbox_to_anchor=(1.03, 1.0),
+    # 掛在最上面那格（尺寸帶）上，圖例才從右欄頂端開始排。
+    ax_dim.legend(_h + _h2, _l + _l2, loc="upper left", bbox_to_anchor=(1.03, 1.0),
                   frameon=False, fontsize=9.5, borderaxespad=0.0)
 
     props = dict(boxstyle="round,pad=0.6", facecolor="#ffffff", edgecolor="#cccccc", alpha=0.92)

@@ -111,6 +111,10 @@ uv run <skill_dir>/scripts/rod_curve_cli.py plot-zenaq --input <FILE.json> --out
 ### `plot-engineering`
 Reads the extracted JSON file and outputs horizontal Engineering-style PNG curves. These plots start horizontally (0 degrees) and include a detailed specification info box on the right.
 
+四層版面（共用 X 軸）：①竿身尺寸帶（握把＋可利用竿長）②額定區間**等比例 1:1** ③額定區間**垂直放大** ④深彎**等比例 1:1**。
+🔴 **②與③畫的是同一組曲線，差別只在 y 軸比例。** ③的形狀不可信（放大數倍），只能讀數字；形狀一律看②與④。
+**在對話中引用工程圖時必須講清楚讀的是哪一格**，否則把③的形狀講成竿子的真實彎曲，就是在說謊。
+
 ⚠️ 負載階梯**與 `plot-zenaq` 完全相同**（依該竿額定推演，見 `get_dynamic_load_list()`），兩張圖的差別**只在持竿角度**。
 → 但**同一支竿同一負載，兩張圖的彎曲量本來就不會一樣，這不是 bug**：垂直負載的力臂是竿身的**水平投影**。水平持竿起始力臂是全長，越彎越短（自我煞車）；45 度上舉起始只有 0.707 倍全長，但越彎越長（自我放大）。兩者回授方向相反，所以差距隨負載變化、甚至會變號。**兩張圖不可互相對照數值。**
 ```bash
